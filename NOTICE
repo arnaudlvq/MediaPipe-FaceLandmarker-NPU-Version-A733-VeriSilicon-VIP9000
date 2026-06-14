@@ -1,0 +1,15 @@
+MediaPipe FaceLandmarker on the VeriSilicon VIP9000 NPU (Allwinner A733)
+Copyright 2026 Arnaud Levaicque (@arnaudlvq)
+
+Licensed under the Apache License, Version 2.0.
+
+This product includes and produces derivatives of the MediaPipe FaceLandmarker
+models (face_detector, face_landmarks_detector, face_blendshapes) by Google LLC,
+distributed under the Apache License, Version 2.0:
+  https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker
+
+The compiled NBG binaries in compiled/ are derivative works of those models,
+produced with the VeriSilicon ACUITY toolkit for the Allwinner A733 NPU.
+
+This is an independent project, not affiliated with or endorsed by Google,
+VeriSilicon, Allwinner, or Radxa. Trademarks belong to their respective owners.

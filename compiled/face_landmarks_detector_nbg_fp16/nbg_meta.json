@@ -1,0 +1,49 @@
+{
+    "Inputs": {
+        "input_12_0": {
+            "name": "input_12",
+            "shape": [
+                1,
+                256,
+                256,
+                3
+            ],
+            "format": "nhwc",
+            "dtype": "float16"
+        }
+    },
+    "Outputs": {
+        "Identity_221": {
+            "name": "Identity",
+            "shape": [
+                1,
+                1,
+                1,
+                1434
+            ],
+            "format": "nhwc",
+            "dtype": "float16"
+        },
+        "Identity_1_222": {
+            "name": "Identity_1",
+            "shape": [
+                1,
+                1,
+                1,
+                1
+            ],
+            "format": "nhwc",
+            "dtype": "float16"
+        },
+        "Identity_2_223": {
+            "name": "Identity_2",
+            "shape": [
+                1,
+                1
+            ],
+            "format": "nhwc",
+            "dtype": "float16"
+        }
+    },
+    "Recurrent_connections": {}
+}

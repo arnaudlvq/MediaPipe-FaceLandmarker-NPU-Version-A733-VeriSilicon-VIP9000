@@ -1,0 +1,25 @@
+{
+    "Inputs": {
+        "serving_default_input_points/0_0": {
+            "name": "serving_default_input_points/0",
+            "shape": [
+                1,
+                146,
+                2
+            ],
+            "format": "nhwc",
+            "dtype": "float16"
+        }
+    },
+    "Outputs": {
+        "StatefulPartitionedCall/0_153": {
+            "name": "StatefulPartitionedCall/0",
+            "shape": [
+                52
+            ],
+            "format": "nhwc",
+            "dtype": "float16"
+        }
+    },
+    "Recurrent_connections": {}
+}

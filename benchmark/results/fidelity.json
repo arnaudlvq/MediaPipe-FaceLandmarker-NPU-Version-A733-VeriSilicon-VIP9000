@@ -1,0 +1,34 @@
+{
+  "description": "Mean absolute error of each ACUITY-converted model vs the reference TFLite (XNNPACK) output, on identical inputs. Measured with convert/compare_acuity_vs_tflite.py inside the ubuntu-npu container. Lower is better; 'float import' is the un-quantized ACUITY graph (sanity bound).",
+  "date": "2026-06-13",
+  "metric": "mean_abs_error",
+  "models": {
+    "face_detector": {
+      "output": "regressors (box coords, 14336 values)",
+      "unit": "logit",
+      "float_import": 0.2482,
+      "fp16": 0.2484,
+      "bf16": 0.2448,
+      "int16": 0.2515,
+      "pcq_int8": 1.9701
+    },
+    "face_landmarks_detector": {
+      "output": "478 landmarks (1434 values)",
+      "unit": "pixel @256",
+      "float_import": 0.0890,
+      "fp16": 0.0926,
+      "bf16": 0.2167,
+      "int16": 0.1217,
+      "pcq_int8": 1.7760
+    },
+    "face_blendshapes": {
+      "output": "52 blendshape scores",
+      "unit": "score 0-1",
+      "float_import": 0.00002,
+      "fp16": 0.00020,
+      "bf16": 0.00207,
+      "int16": 0.00013,
+      "pcq_int8": 0.00951
+    }
+  }
+}

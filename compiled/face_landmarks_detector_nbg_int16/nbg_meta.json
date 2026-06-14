@@ -1,0 +1,73 @@
+{
+    "Inputs": {
+        "input_12_0": {
+            "name": "input_12",
+            "shape": [
+                1,
+                256,
+                256,
+                3
+            ],
+            "format": "nhwc",
+            "quantizer": "dynamic_fixed_point",
+            "quantize": {
+                "qtype": "i16",
+                "max_value": 1.0000079870224,
+                "min_value": 0.0,
+                "fl": 14
+            }
+        }
+    },
+    "Outputs": {
+        "Identity_221": {
+            "name": "Identity",
+            "shape": [
+                1,
+                1,
+                1,
+                1434
+            ],
+            "format": "nhwc",
+            "quantizer": "dynamic_fixed_point",
+            "quantize": {
+                "qtype": "i16",
+                "max_value": 211.55810546875,
+                "min_value": -36.48191452026367,
+                "fl": 7
+            }
+        },
+        "Identity_1_222": {
+            "name": "Identity_1",
+            "shape": [
+                1,
+                1,
+                1,
+                1
+            ],
+            "format": "nhwc",
+            "quantizer": "dynamic_fixed_point",
+            "quantize": {
+                "qtype": "i16",
+                "max_value": 22.88846778869629,
+                "min_value": 22.88846778869629,
+                "fl": 10
+            }
+        },
+        "Identity_2_223": {
+            "name": "Identity_2",
+            "shape": [
+                1,
+                1
+            ],
+            "format": "nhwc",
+            "quantizer": "dynamic_fixed_point",
+            "quantize": {
+                "qtype": "i16",
+                "max_value": 0.013542234897613525,
+                "min_value": 0.013542234897613525,
+                "fl": 21
+            }
+        }
+    },
+    "Recurrent_connections": {}
+}

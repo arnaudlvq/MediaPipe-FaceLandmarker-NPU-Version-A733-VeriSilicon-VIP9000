@@ -1,0 +1,56 @@
+{
+    "Inputs": {
+        "input_0": {
+            "name": "input",
+            "shape": [
+                1,
+                128,
+                128,
+                3
+            ],
+            "format": "nhwc",
+            "quantizer": "dynamic_fixed_point",
+            "quantize": {
+                "qtype": "i16",
+                "max_value": 0.9999951720237732,
+                "min_value": -0.9999951720237732,
+                "fl": 15
+            }
+        }
+    },
+    "Outputs": {
+        "regressors_91": {
+            "name": "regressors",
+            "shape": [
+                1,
+                896,
+                16
+            ],
+            "format": "nhwc",
+            "quantizer": "dynamic_fixed_point",
+            "quantize": {
+                "qtype": "i16",
+                "max_value": 196.49278259277344,
+                "min_value": -63.04408645629883,
+                "fl": 7
+            }
+        },
+        "classificators_92": {
+            "name": "classificators",
+            "shape": [
+                1,
+                896,
+                1
+            ],
+            "format": "nhwc",
+            "quantizer": "dynamic_fixed_point",
+            "quantize": {
+                "qtype": "i16",
+                "max_value": 2.832382917404175,
+                "min_value": -117.22647857666016,
+                "fl": 8
+            }
+        }
+    },
+    "Recurrent_connections": {}
+}

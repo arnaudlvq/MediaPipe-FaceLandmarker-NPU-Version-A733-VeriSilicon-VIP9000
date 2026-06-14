@@ -1,0 +1,31 @@
+{
+    "Inputs": {
+        "serving_default_input_points/0_0": {
+            "name": "serving_default_input_points/0",
+            "shape": [
+                1,
+                146,
+                2
+            ],
+            "format": "nhwc",
+            "dtype": "float16"
+        }
+    },
+    "Outputs": {
+        "StatefulPartitionedCall/0_153": {
+            "name": "StatefulPartitionedCall/0",
+            "shape": [
+                52
+            ],
+            "format": "nhwc",
+            "quantizer": "dynamic_fixed_point",
+            "quantize": {
+                "qtype": "i16",
+                "max_value": 0.6486043334007263,
+                "min_value": 2.0556140611915907e-07,
+                "fl": 15
+            }
+        }
+    },
+    "Recurrent_connections": {}
+}

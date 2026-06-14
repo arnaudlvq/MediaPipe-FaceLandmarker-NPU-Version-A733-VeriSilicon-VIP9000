@@ -1,0 +1,38 @@
+{
+    "Inputs": {
+        "input_0": {
+            "name": "input",
+            "shape": [
+                1,
+                128,
+                128,
+                3
+            ],
+            "format": "nhwc",
+            "dtype": "float16"
+        }
+    },
+    "Outputs": {
+        "regressors_91": {
+            "name": "regressors",
+            "shape": [
+                1,
+                896,
+                16
+            ],
+            "format": "nhwc",
+            "dtype": "float16"
+        },
+        "classificators_92": {
+            "name": "classificators",
+            "shape": [
+                1,
+                896,
+                1
+            ],
+            "format": "nhwc",
+            "dtype": "float16"
+        }
+    },
+    "Recurrent_connections": {}
+}
