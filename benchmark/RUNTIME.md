@@ -112,12 +112,15 @@ On the Radxa Cubie A7A (A733), VIPLite v2.0, averaged over 100 loops:
 | face_blendshapes | 0.48 ms | 14.60 ms |
 | **total** | **4.31 ms** | 134.45 ms |
 
-CPU reference (MediaPipe FaceLandmarker, full frame, Cortex-A76, XNNPACK):
-**≈ 35 ms**.
+CPU reference at the same scope (raw per-model TFLite/XNNPACK fp32, pinned to
+one Cortex-A76): **24.2 ms** total (17.75 ms for the landmarks model alone).
+MediaPipe's full CPU frame including pre/post: ≈ 35 ms.
 
-**INT16 is the deploy target** — ~30× faster than FP16 on the NANO-DI (which
-has no fast native FP16 path), ~8× faster than the CPU, and near-lossless
-(0.12 px landmark error). See the repo README for the full discussion.
+**INT16 is the deploy target** — ~30× faster than FP16 on the NANO-DI (cycle
+counters show fp16 executes ~29× more cycles: the MAC arrays are integer-only),
+5.6× faster than the CPU at iso-scope, and near-lossless (0.12 px landmark
+error). I/O overhead is ~0.25 ms per inference (wall vs compute time); network
+create/prepare (~6 ms) is one-time. See the repo README for the full discussion.
 
 ---
 

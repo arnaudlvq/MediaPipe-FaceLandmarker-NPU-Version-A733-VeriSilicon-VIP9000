@@ -7,7 +7,7 @@ compiled to run on the 3 TOPS NPU of the Allwinner A733 (Radxa Cubie A7A / A7Z
 
 ![status](https://img.shields.io/badge/conversion-validated-1d9e75)
 ![status](https://img.shields.io/badge/on--device-benchmarked-1d9e75)
-![speed](https://img.shields.io/badge/NPU_int16-8x_faster_than_CPU-1d9e75)
+![speed](https://img.shields.io/badge/NPU_int16-5.6x_CPU_(iso--scope)-1d9e75)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![platform](https://img.shields.io/badge/SoC-Allwinner_A733-444)
 ![npu](https://img.shields.io/badge/NPU-VeriSilicon_VIP9000-444)
@@ -69,39 +69,44 @@ INT8 is rejected. FP16 and INT16 are both accurate enough — **but which one yo
 actually run should be decided by _speed on the real silicon_, not fidelity
 alone. That is where the on-device benchmark below is decisive.**
 
-### On-device latency: NPU vs CPU (measured)
+### On-device latency: NPU vs CPU (measured, iso-scope)
 
 ![latency](charts/latency_npu_vs_cpu.png)
 
-Measured with `vpm_run` (VIPLite v2.0, averaged over 100 loops) on the physical
-VIP9000, against MediaPipe's own end-to-end CPU frame time on the Cortex-A76:
+NPU measured with `vpm_run` (VIPLite v2.0, averaged over 100 loops) on the
+physical VIP9000. CPU measured at the **same scope** — raw per-model
+TFLite/XNNPACK fp32 inference (tflite-runtime, median of 100 loops, pinned to a
+Cortex-A76 with `taskset`). Pure inference vs pure inference, no pre/post:
 
-| model | NPU **int16** | NPU fp16 | (CPU MediaPipe, full frame) |
-|---|---|---|---|
-| face_detector | **0.67 ms** | 21.8 ms | — |
-| face_landmarks | **3.16 ms** | 98.1 ms | — |
-| face_blendshapes | **0.48 ms** | 14.6 ms | — |
-| **3-model total** | **≈ 4.3 ms** | ≈ 134 ms | ≈ 35 ms |
+| model | NPU **int16** | CPU fp32 (1× A76) | CPU fp32 (2× A76) | NPU fp16 |
+|---|---|---|---|---|
+| face_detector | **0.67 ms** | 3.86 ms | 2.39 ms | 21.8 ms |
+| face_landmarks | **3.16 ms** | 17.75 ms | 12.84 ms | 98.1 ms |
+| face_blendshapes | **0.48 ms** | 2.63 ms | 1.71 ms | 14.6 ms |
+| **3-model total** | **4.31 ms** | 24.2 ms | 16.9 ms | 134 ms |
 
-**The counter-intuitive result — the whole point of running it on real
+**The counter-intuitive results — the whole point of running it on real
 silicon:**
 
-- **INT16 is ~30× faster than FP16 on this NPU.** The VIP9000 **NANO-DI** has no
-  strong native FP16 compute path, so the "obvious" lossless FP16 route
-  (134 ms) is actually **slower than the CPU**. On a bigger VIP9000 with a full
-  FP16 pipe the story would differ — but on the chip that ships in these boards,
-  **INT16 is the correct precision.** This is not deducible from datasheets; it
-  had to be measured.
-- **INT16 is also near-lossless** (0.12 px landmark error, table above) — so the
-  30× speed-up costs no meaningful accuracy.
-- **INT16 NPU (~4.3 ms) is ~8× faster than the full CPU MediaPipe frame
-  (~35 ms)**, and it moves the work off the CPU entirely — the thermal and power
-  win that matters for a 24/7 art installation.
-- NPU figures are pure `vip_run_network` compute; CPU pre/post-processing
-  (letterbox, BlazeFace anchor-decode + NMS, crop, tensor packing) adds a few ms
-  on the A76, but the inference win dominates.
+- **NPU int16 is 5.6× faster than one A76 core, 3.9× faster than both** — at
+  matched output accuracy (int16 is 0.12 px off the fp32 reference). Against
+  MediaPipe's full CPU frame (~35 ms end-to-end including pre/post) the gap is
+  ~8×, a different scope stated separately on purpose. And the NPU offloads the
+  CPU entirely — the thermal/power win that matters for always-on installs.
+- **FP16 is a trap on this NPU, and the cycle counters prove why:** the fp16
+  graph executes **~29× more cycles** than int16 (98.4M vs 3.4M for the
+  landmarks model) at the same effective clock (~1 GHz). The NANO-DI's fast MAC
+  arrays are **integer-only**; fp16 convolutions fall back to a slow
+  programmable path. This is a hardware mapping limit — no export flag fixes it.
+  On a bigger VIP9000 with a real FP16 pipe the story would differ, but on this
+  chip **INT16 is the correct precision**, and it costs no meaningful accuracy.
+- **I/O overhead is small:** wall time vs pure-compute time differ by ~0.25 ms
+  on the largest model (256×256×3 input DMA + output read + dispatch), ~7% of
+  compute. Network create/prepare (~6 ms) happens once at startup. A chained
+  3-model runner should budget ~5-6 ms/frame NPU-side plus CPU pre/post
+  (letterbox, anchor decode + NMS, crop, tensor packing).
 
-Raw numbers and method: [benchmark/results/latency.json](benchmark/results/latency.json).
+Raw numbers, cycle counts and method: [benchmark/results/latency.json](benchmark/results/latency.json).
 
 ## How it works
 
@@ -181,7 +186,8 @@ matching `--optimize` target.
 ## Roadmap
 
 - [x] First on-device inference (`vpm_run` against VIPLite v2.0)
-- [x] Latency benchmark, NPU vs CPU — **int16 wins, ~8× vs CPU**
+- [x] Latency benchmark, NPU vs CPU (iso-scope) — **int16 wins, 5.6× vs CPU**
+- [x] FP16 root cause via cycle counters — integer-only MAC arrays, unfixable
 - [ ] Full C runner: anchor decoding, NMS, crop, the 3-model chain
 - [ ] Live demo (the [Watch Me](https://github.com/arnaudlvq/watchme) eye-contact clock that motivated this)
 - [ ] Python path via `tflite-vx-delegate` (exploratory, see RESEARCH.md)

@@ -1,7 +1,7 @@
 {
-  "description": "Per-model inference latency on the Radxa Cubie A7A (Allwinner A733). NPU = VeriSilicon VIP9000 NANO-DI, run with the ai-sdk vpm_run tool (reported 'profile inference time', averaged over 100 loops; a dummy zero input is used - latency is input-independent for a fixed graph). CPU = MediaPipe FaceLandmarker end-to-end per frame (Tasks VIDEO mode, tracking on, XNNPACK on the Cortex-A76).",
+  "description": "Per-model inference latency on the Radxa Cubie A7A (Allwinner A733). NPU = VeriSilicon VIP9000 NANO-DI, run with the ai-sdk vpm_run tool (reported 'profile inference time', averaged over 100 loops; a dummy zero input is used - latency is input-independent for a fixed graph). CPU = raw per-model TFLite/XNNPACK fp32 inference (tflite-runtime 2.13, median of 100 loops, pinned to the Cortex-A76 with taskset) - the SAME scope as the NPU numbers: pure inference, no pre/post.",
   "date": "2026-07-01",
-  "board": "Radxa Cubie A7A, A733, kernel 5.15.147-21-a733, /dev/vipcore, ai-sdk viplite v2.0",
+  "board": "Radxa Cubie A7A, A733, kernel 5.15.147-21-a733, /dev/vipcore, ai-sdk viplite v2.0 (2.0.3.2-AW-2024-08-30)",
   "unit": "ms",
   "npu_int16": {
     "face_detector": 0.67,
@@ -15,11 +15,43 @@
     "face_blendshapes": 14.6,
     "total": 134.45
   },
+  "cpu_tflite_fp32_1thread": {
+    "note": "pinned: taskset -c 6 (one Cortex-A76 @ 2.0 GHz), num_threads=1",
+    "face_detector": 3.86,
+    "face_landmarks_detector": 17.75,
+    "face_blendshapes": 2.63,
+    "total": 24.24
+  },
+  "cpu_tflite_fp32_2threads": {
+    "note": "pinned: taskset -c 6,7 (both Cortex-A76), num_threads=2",
+    "face_detector": 2.39,
+    "face_landmarks_detector": 12.84,
+    "face_blendshapes": 1.71,
+    "total": 16.95
+  },
   "cpu_mediapipe_end_to_end_ms": 35.0,
+  "npu_io_overhead": {
+    "note": "vpm_run 'run time' (wall: input DMA write + dispatch + output read) minus 'profile inference time' (pure compute), face_landmarks_detector int16, 20 loops, no layer profiling",
+    "wall_ms_avg": 3.48,
+    "compute_ms_avg": 3.24,
+    "io_dispatch_overhead_ms": 0.25,
+    "one_time_create_network_ms": 4.4,
+    "one_time_prepare_network_ms": 1.4
+  },
+  "fp16_root_cause": {
+    "note": "cycle counters from vpm_run: same effective clock, ~29x more cycles executed in fp16 -> the fp16 graph does not map to the NANO-DI's integer MAC arrays and falls back to a much slower programmable path. Hardware mapping limit, not an I/O or config issue.",
+    "int16_cycles_per_inference": 3424103,
+    "fp16_cycles_per_inference": 98406050,
+    "cycle_ratio": 28.7,
+    "int16_effective_mhz": 963,
+    "fp16_effective_mhz": 1005
+  },
   "findings": [
-    "int16 is ~30x FASTER than fp16 on this VIP9000 NANO-DI: the NPU has no strong native fp16 path, so fp16 (134 ms) is actually SLOWER than the CPU. int16 (4.3 ms) is the correct precision.",
-    "int16 is also near-lossless here (0.12 px mean landmark error vs the reference TFLite - see fidelity.json), so no accuracy is traded for the speed.",
-    "NPU inference (~4.3 ms, int16) is ~8x faster than the full CPU MediaPipe frame (~35 ms), and offloads the CPU entirely (thermal/power win).",
-    "NPU numbers are pure vip_run_network compute; they exclude CPU pre/post (letterbox, BlazeFace anchor decode + NMS, crop, landmark->tensor). Those add a few ms on the A76 but the inference win dominates."
+    "Fair iso-scope comparison (pure inference vs pure inference): NPU int16 4.31 ms vs CPU fp32 24.24 ms (1x A76) = 5.6x faster; vs 16.95 ms (2x A76) = 3.9x faster. Both are near-lossless (int16 0.12 px vs fp32-reference 0 px), so this is also iso-accuracy in practice.",
+    "Against the full MediaPipe CPU frame (~35 ms end-to-end incl. pre/post) the NPU inference is ~8x faster - a different scope, stated separately on purpose.",
+    "fp16 root cause found via cycle counters: ~29x more cycles at the same clock. The NANO-DI's fast MAC arrays are integer-only; fp16 convolutions fall back to a slow programmable path. Unfixable by configuration - int16 is the deploy precision on this NPU.",
+    "NPU I/O overhead is small: ~0.25 ms per inference for the largest model (256x256x3 int16 input, DMA write + output read + dispatch), ~7% of compute. Network create/prepare (~6 ms) is one-time at startup.",
+    "int16 is near-lossless (0.12 px mean landmark error vs reference - see fidelity.json), so no accuracy is traded for the speed.",
+    "The CPU has no int16 execution path for these models (XNNPACK computes in fp32 from fp16 weights), so fp32-CPU vs int16-NPU at matched output accuracy is the fair comparison."
   ]
 }

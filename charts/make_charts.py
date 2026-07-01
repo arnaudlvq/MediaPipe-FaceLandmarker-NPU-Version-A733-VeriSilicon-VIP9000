@@ -68,15 +68,16 @@ def fidelity_chart() -> None:
 
 
 def latency_chart() -> None:
-    """Measured on the Radxa Cubie A7A (A733): NPU (int16 & fp16) vs CPU."""
+    """Measured on the Radxa Cubie A7A (A733): NPU (int16 & fp16) vs CPU, iso-scope."""
     data = json.loads((RESULTS / "latency.json").read_text())
     models = ["face_detector", "face_landmarks_detector", "face_blendshapes"]
     labels = ["face_detector", "face_landmarks", "face_blendshapes"]
     series = [
         ("NPU int16", "#1d9e75", [data["npu_int16"][m] for m in models]),
+        ("CPU fp32 (1x A76)", "#888780", [data["cpu_tflite_fp32_1thread"][m] for m in models]),
         ("NPU fp16", "#e24b4a", [data["npu_fp16"][m] for m in models]),
     ]
-    cpu = data["cpu_mediapipe_end_to_end_ms"]
+    cpu_e2e = data["cpu_mediapipe_end_to_end_ms"]
 
     fig, ax = plt.subplots(figsize=(9, 4.8))
     n = len(series)
@@ -86,16 +87,17 @@ def latency_chart() -> None:
         bars = ax.bar(xs, vals, width, label=name, color=colour)
         ax.bar_label(bars, fmt="%.1f", padding=2, fontsize=8, color=INK)
 
-    ax.axhline(cpu, color="#888780", linewidth=1.4, linestyle="--")
-    ax.text(len(models) - 0.5, cpu * 1.05, f"CPU full frame  {cpu:.0f} ms",
-            ha="right", va="bottom", color="#5f5e5a", fontsize=9)
+    ax.axhline(cpu_e2e, color="#bbb9b2", linewidth=1.2, linestyle="--")
+    ax.text(len(models) - 0.5, cpu_e2e * 1.05,
+            f"CPU MediaPipe full frame (incl. pre/post)  {cpu_e2e:.0f} ms",
+            ha="right", va="bottom", color="#8a8880", fontsize=8)
 
     ax.set_yscale("log")
     ax.set_xticks(range(len(models)))
     ax.set_xticklabels(labels, fontsize=9, color=INK)
-    ax.set_ylabel("inference latency (ms, log scale)", color=INK)
+    ax.set_ylabel("pure inference latency (ms, log scale)", color=INK)
     ax.set_title(
-        "A733: NPU int16 is ~8x faster than CPU  -  fp16 is a trap (30x slower than int16)",
+        "A733, iso-scope: NPU int16 is 5.6x faster than CPU  -  fp16 is a trap (29x the cycles)",
         color=INK, fontweight="medium", fontsize=11,
     )
     ax.legend(frameon=False, ncol=2, loc="upper center", bbox_to_anchor=(0.5, -0.13))
