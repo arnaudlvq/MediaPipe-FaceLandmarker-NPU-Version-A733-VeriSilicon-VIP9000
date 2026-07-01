@@ -1,0 +1,25 @@
+{
+  "description": "Per-model inference latency on the Radxa Cubie A7A (Allwinner A733). NPU = VeriSilicon VIP9000 NANO-DI, run with the ai-sdk vpm_run tool (reported 'profile inference time', averaged over 100 loops; a dummy zero input is used - latency is input-independent for a fixed graph). CPU = MediaPipe FaceLandmarker end-to-end per frame (Tasks VIDEO mode, tracking on, XNNPACK on the Cortex-A76).",
+  "date": "2026-07-01",
+  "board": "Radxa Cubie A7A, A733, kernel 5.15.147-21-a733, /dev/vipcore, ai-sdk viplite v2.0",
+  "unit": "ms",
+  "npu_int16": {
+    "face_detector": 0.67,
+    "face_landmarks_detector": 3.16,
+    "face_blendshapes": 0.48,
+    "total": 4.31
+  },
+  "npu_fp16": {
+    "face_detector": 21.75,
+    "face_landmarks_detector": 98.1,
+    "face_blendshapes": 14.6,
+    "total": 134.45
+  },
+  "cpu_mediapipe_end_to_end_ms": 35.0,
+  "findings": [
+    "int16 is ~30x FASTER than fp16 on this VIP9000 NANO-DI: the NPU has no strong native fp16 path, so fp16 (134 ms) is actually SLOWER than the CPU. int16 (4.3 ms) is the correct precision.",
+    "int16 is also near-lossless here (0.12 px mean landmark error vs the reference TFLite - see fidelity.json), so no accuracy is traded for the speed.",
+    "NPU inference (~4.3 ms, int16) is ~8x faster than the full CPU MediaPipe frame (~35 ms), and offloads the CPU entirely (thermal/power win).",
+    "NPU numbers are pure vip_run_network compute; they exclude CPU pre/post (letterbox, BlazeFace anchor decode + NMS, crop, landmark->tensor). Those add a few ms on the A76 but the inference win dominates."
+  ]
+}
