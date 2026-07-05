@@ -20,6 +20,17 @@ blendshapes, compiled and measured on the 3 TOPS NPU of the Allwinner A733
 
 ---
 
+## TL;DR — measured on real silicon
+
+- ⚡ **The 3-model face pipeline runs in 4.3 ms on the NPU (int16)** — **5.6× faster** than one Cortex-A76, at matched accuracy (0.12 px landmark error).
+- 🔋 **~7× less power than the CPU**, measured at the wall with a USB meter: **+0.11 W** for the NPU vs +0.77 W for the A76 at 15 fps. The whole board runs the artwork at **~2.5 W**.
+- 🪤 **FP16 is a trap on this NPU** — **29× more cycles** than int16 (the NANO-DI's fast MACs are integer-only), *slower than the CPU*. Proven with hardware **cycle counters**, not guessed.
+- 🚫 **BF16 is refused by the hardware**, INT8 is too lossy (1.78 px). **INT16 is the precision to ship** — and it's near-lossless.
+
+The whole thing is reproducible: vendored models, compiled NBG binaries, the exact ACUITY recipe, and the `vpm_run` runtime. Charts and raw JSON below.
+
+---
+
 ## Why this exists
 
 I went looking for a way to run MediaPipe's face models on this NPU and came up
