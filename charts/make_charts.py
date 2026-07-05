@@ -111,6 +111,54 @@ def latency_chart() -> None:
     print("wrote charts/latency_npu_vs_cpu.png")
 
 
+def energy_chart() -> None:
+    """Measured whole-board power (USB meter): the NPU's energy advantage."""
+    data = json.loads((RESULTS / "power.json").read_text())
+    idle = data["idle_w"]
+    at15 = data["at_15fps"]
+    order = [("npu_int16", "NPU int16", "#1d9e75"),
+             ("cpu_2x_a76", "CPU 2× A76", "#ca6f1e"),
+             ("cpu_1x_a76", "CPU 1× A76", "#e59866")]
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(10, 4.4), gridspec_kw={"width_ratios": [1, 1.15]})
+
+    # left: marginal power for the same 15 fps workload
+    names = [o[1] for o in order]
+    vals = [at15[o[0]]["marginal_w"] for o in order]
+    bars = ax.barh(names, vals, color=[o[2] for o in order], height=0.6)
+    ax.bar_label(bars, fmt="+%.2f W", padding=3, fontsize=10, color=INK, fontweight="bold")
+    ax.set_xlim(0, max(vals) * 1.35)
+    ax.set_xlabel("extra board power vs idle (W)", color=INK)
+    ax.set_title("Same face pipeline @ 15 fps\nNPU adds ~7× less power", color=INK,
+                 fontweight="medium", fontsize=11)
+    ax.invert_yaxis()
+
+    # right: NPU board power vs inference rate (flat to ~60 fps)
+    sw = {int(k): v for k, v in data["npu_sweep"].items() if k.isdigit()}
+    xs = sorted(sw)
+    ax2.plot(xs, [sw[x] for x in xs], "-o", color="#1d9e75", lw=2.4, ms=5)
+    ax2.axhline(idle, color="#ccc", ls=":", lw=1)
+    ax2.text(xs[-1], idle - 0.05, f"idle {idle} W", ha="right", fontsize=8, color="#999")
+    ax2.axvspan(0, 60, color="#1d9e75", alpha=0.06)
+    ax2.text(30, sw[max(sw)] * 0.9, "flat to ~60 fps\n(+0.09 W)", fontsize=9,
+             color="#1d7a5a", ha="center")
+    ax2.set_xlabel("NPU inference rate (fps)", color=INK)
+    ax2.set_ylabel("board power (W)", color=INK)
+    ax2.set_title("NPU board power vs rate", color=INK, fontweight="medium", fontsize=11)
+
+    for a in (ax, ax2):
+        a.grid(axis="x" if a is ax else "y", color=GRID, linewidth=0.6)
+        a.set_axisbelow(True)
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+    fig.suptitle("A733 whole-board power (RuiDeng TC66C, in-line, 30 s averages)",
+                 color=INK, fontsize=12, fontweight="medium")
+    fig.tight_layout()
+    fig.savefig(OUT / "energy_npu_vs_cpu.png", dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    print("wrote charts/energy_npu_vs_cpu.png")
+
+
 if __name__ == "__main__":
     fidelity_chart()
     latency_chart()
+    energy_chart()

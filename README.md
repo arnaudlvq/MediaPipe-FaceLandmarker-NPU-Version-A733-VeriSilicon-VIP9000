@@ -8,6 +8,7 @@ compiled to run on the 3 TOPS NPU of the Allwinner A733 (Radxa Cubie A7A / A7Z
 ![status](https://img.shields.io/badge/conversion-validated-1d9e75)
 ![status](https://img.shields.io/badge/on--device-benchmarked-1d9e75)
 ![speed](https://img.shields.io/badge/NPU_int16-5.6x_CPU_(iso--scope)-1d9e75)
+![energy](https://img.shields.io/badge/energy-~7x_less_than_CPU-1d9e75)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![platform](https://img.shields.io/badge/SoC-Allwinner_A733-444)
 ![npu](https://img.shields.io/badge/NPU-VeriSilicon_VIP9000-444)
@@ -107,6 +108,25 @@ silicon:**
   (letterbox, anchor decode + NMS, crop, tensor packing).
 
 Raw numbers, cycle counts and method: [benchmark/results/latency.json](benchmark/results/latency.json).
+
+### Energy: the NPU's real win (measured at the wall)
+
+Latency is only half the story. Power was measured on the whole board with an
+in-line **RuiDeng TC66C** USB meter (30 s averages, CPU utilisation tracked to
+confirm the watts are the NPU's, not hidden CPU work):
+
+![energy](charts/energy_npu_vs_cpu.png)
+
+- Running the same 3-model face pipeline at **15 fps**, the NPU adds **+0.11 W**
+  over the 2.42 W idle, versus **+0.77 W** for a single Cortex-A76 — **~7× less
+  power for the same result**, at matched output accuracy.
+- The NPU's board power is **nearly flat from 5 to 60 fps** (2.50 → 2.59 W): you
+  can raise the inference rate almost for free up to ~60 fps.
+- During NPU inference the A76 sits at **1–3 % utilisation** (416–627 MHz), so
+  the measured watts are genuinely the NPU's. A native chained C runner (no
+  per-call `vpm_run` setup) would push them a little lower still.
+
+Raw numbers: [benchmark/results/power.json](benchmark/results/power.json).
 
 ## How it works
 
