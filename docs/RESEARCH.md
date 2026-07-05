@@ -1,20 +1,17 @@
-# Porting MediaPipe FaceLandmarker to the Allwinner A733 VIP9000 NPU, state of the art
+# Porting MediaPipe FaceLandmarker to the Allwinner A733 VIP9000 NPU, approaches and risks
 
 *Deep research, 2026-06-12. 5 axes, 19 primary sources, 25 claims verified by
 adversarial triple-vote (24 confirmed, 1 refuted).*
 
-## Overall verdict
+## Context
 
-**We found no public port.** No port of BlazeFace, Face Mesh / Attention Mesh or
-GHUM Blendshapes to a VeriSilicon VIP9000 NPU appears to exist, neither at Radxa
-(the [official A7A Model Zoo](https://docs.radxa.com/en/cubie/a7a/app-dev/npu-dev/model-zoo)
-lists ~20 models: YOLO v3→v26, RetinaFace, MobileNet, ResNet50… zero MediaPipe
-models), nor in the Khadas (A311D), NXP (i.MX 8M Plus) or Mesa/Teflon
-communities. The closest prior art is RetinaFace (face detection only). The
-"MediaPipe" page of the Radxa A7A docs is a plain CPU `pip install mediapipe`.
-
-→ We did not find any public prior port, which is why a clean, well-documented
-repo seems worth publishing.
+The Radxa A7A Model Zoo ships about 20 models (YOLO variants, RetinaFace,
+MobileNet, ResNet50). For faces it includes RetinaFace, which does detection
+only. The MediaPipe entry in the Radxa docs is a plain CPU `pip install
+mediapipe`. This document works through how to bring the full FaceLandmarker
+pipeline (detection, a 478 point mesh, 52 blendshapes) onto the NPU: the
+candidate toolchains, the operator risk, the quantization strategy, and what to
+measure.
 
 ## The four paths
 
@@ -54,21 +51,20 @@ classifier), start directly on **pcq or int16**, with the
 [precision optimization page](https://docs.radxa.com/en/cubie/a7a/app-dev/npu-dev/cubie-quant-acc-improve)
 (mixed quantization) as a fallback.
 
-## Performance: no published data, we broke ground
+## Performance: measured, not assumed
 
-No latency figure exists for BlazeFace/Face Mesh style models on the A733's 3
-TOPS VIP9000. The only references in the family: A311D 5 TOPS, MobileNetV1 ≈
-5.5-6.6 ms. Assumed open question: for models this small (1-5 MFLOPs), does the
-NPU gain beat the memory-transfer cost versus the A76 + XNNPACK? **That is
-exactly what our bench (`npu/bench/`) measured**, p50/p95/p99 latency, fps,
-temperatures, at peak and over endurance, CPU vs NPU on the same grid.
-Complementary on-device tools: `vpm_run` and `NBinfo` (documented by Radxa, no
-published result found).
+For models this small (1-5 MFLOPs), it is not obvious whether the NPU gain beats
+the memory-transfer cost versus the A76 + XNNPACK. Rather than assume, we
+measured it: p50/p95/p99 latency, fps, temperatures, at peak and over endurance,
+CPU vs NPU on the same grid (see `benchmark/`). The nearest reference in the
+family is the A311D 5 TOPS (MobileNetV1 ≈ 5.5-6.6 ms), a different NPU generation
+that does not transpose directly. Complementary on-device tools: `vpm_run` and
+`NBinfo`.
 
 ## Honesty caveats
 
 - Converting Attention Mesh and the GHUM Blendshapes was **unproven** going in,
-  the main risk, cleared first (a conversion attempt before writing any C code).
+  the main risk, cleared up front (a conversion attempt before writing any C code).
 - ACUITY's `float` mode may run as native FP16 on the NPU, speed unknown.
 - The A311D figures do not transpose directly (different NPU generation).
 - "Documented" ≠ "reliable": open issues on the delegate (wrong INT8 outputs,

@@ -13,10 +13,8 @@ on-device measurements.
 ![energy](https://img.shields.io/badge/energy-~7x_less_than_CPU-1d9e75)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 
-I looked for an existing public port to a VIP9000 class NPU and did not find one
-(see [docs/RESEARCH.md](docs/RESEARCH.md)). If prior work exists that I missed,
-please open an issue and I will link it. The goal is a working, reproducible
-recipe and honest measurements, not a claim to be first.
+The goal is a working, reproducible recipe with honest, measured numbers. If
+something here is unclear or you spot a mistake, please open an issue.
 
 ## Results
 
