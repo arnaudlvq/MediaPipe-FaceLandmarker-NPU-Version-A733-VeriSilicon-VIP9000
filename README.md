@@ -1,9 +1,14 @@
 # MediaPipe FaceLandmarker on the VeriSilicon VIP9000 NPU (Allwinner A733)
 
-**The first public port of Google's MediaPipe FaceLandmarker to a VeriSilicon
-VIP9000 NPU** — face detection, 478-point face mesh, and 52 blendshapes,
-compiled to run on the 3 TOPS NPU of the Allwinner A733 (Radxa Cubie A7A / A7Z
-/ A7S, Orange Pi 4 Pro).
+**An open, self-contained port of Google's MediaPipe FaceLandmarker to a
+VeriSilicon VIP9000 NPU** — face detection, 478-point face mesh, and 52
+blendshapes, compiled and measured on the 3 TOPS NPU of the Allwinner A733
+(Radxa Cubie A7A / A7Z / A7S, Orange Pi 4 Pro).
+
+> I couldn't find an existing public port when I looked (see
+> [docs/RESEARCH.md](docs/RESEARCH.md)), so I built and measured one and put it
+> here. **If prior work exists that I missed, please open an issue — I'll gladly
+> link it.** The goal is a working, reproducible recipe, not a claim to be first.
 
 ![status](https://img.shields.io/badge/conversion-validated-1d9e75)
 ![status](https://img.shields.io/badge/on--device-benchmarked-1d9e75)
@@ -17,12 +22,14 @@ compiled to run on the 3 TOPS NPU of the Allwinner A733 (Radxa Cubie A7A / A7Z
 
 ## Why this exists
 
-Nobody had published it. A [survey of the toolchain landscape](docs/RESEARCH.md)
-(19 sources, adversarially fact-checked) confirmed that no public port of
-MediaPipe's face models to a VIP9000-class NPU existed — Radxa's own model zoo
-for the A7A ships ~20 models, **none of them MediaPipe**. There are open
-requests for exactly this capability ([onnxruntime#28244](https://github.com/microsoft/onnxruntime/issues/28244),
+I went looking for a way to run MediaPipe's face models on this NPU and came up
+empty. A [survey of the toolchain landscape](docs/RESEARCH.md) (19 sources)
+didn't surface a public port to a VIP9000-class NPU — Radxa's own model zoo for
+the A7A ships ~20 models, **none of them MediaPipe** — and there are open
+requests for exactly this capability
+([onnxruntime#28244](https://github.com/microsoft/onnxruntime/issues/28244),
 [Frigate#23418](https://github.com/blakeblackshear/frigate/discussions/23418)).
+That absence may just mean I didn't find it — either way, here's a working one.
 
 If you have an A733 board and want face landmarks / mesh / blendshapes off the
 CPU and onto the NPU, this repo is your starting point: the **conversion
