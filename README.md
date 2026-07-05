@@ -11,7 +11,7 @@ on-device measurements.
 ![benchmarked](https://img.shields.io/badge/on--device-benchmarked-1d9e75)
 ![speed](https://img.shields.io/badge/NPU_int16-5.6x_CPU-1d9e75)
 ![energy](https://img.shields.io/badge/energy-~7x_less_than_CPU-1d9e75)
-![license](https://img.shields.io/badge/license-Apache--2.0-blue)
+![license](https://img.shields.io/badge/license-MIT-blue)
 
 I looked for an existing public port to a VIP9000 class NPU and did not find one
 (see [docs/RESEARCH.md](docs/RESEARCH.md)). If prior work exists that I missed,
@@ -169,7 +169,9 @@ this NPU target; another VIP9000 variant needs a re-export with the matching
 
 ## License
 
-Apache-2.0 (see [LICENSE](LICENSE) and [NOTICE](NOTICE)). The compiled binaries
-are derivatives of Google's MediaPipe FaceLandmarker models, distributed under
-Apache-2.0. This is an independent project, not affiliated with Google,
-VeriSilicon, Allwinner, or Radxa.
+MIT (see [LICENSE](LICENSE)) for this project's own code, scripts, and build
+recipes. The compiled binaries in `compiled/` are derivatives of Google's
+MediaPipe FaceLandmarker models and remain under their original Apache-2.0
+terms; see [NOTICE](NOTICE) for the third-party attribution. This is an
+independent project, not affiliated with Google, VeriSilicon, Allwinner, or
+Radxa.
