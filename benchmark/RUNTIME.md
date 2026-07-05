@@ -130,7 +130,7 @@ create/prepare (~6 ms) is one-time. See the repo README for the full discussion.
 set +e
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/ai-sdk/viplite-tina/lib/aarch64-none-linux-gnu/v2.0
 VPM=$HOME/ai-sdk/examples/vpm_run/vpm_run
-COMP=$HOME/watchme/npu/compiled          # or this repo's compiled/
+COMP=./compiled                          # this repo's compiled NBGs
 sz_face_detector=98304
 sz_face_landmarks_detector=393216
 sz_face_blendshapes=584

@@ -33,8 +33,10 @@ That absence may just mean I didn't find it — either way, here's a working one
 
 If you have an A733 board and want face landmarks / mesh / blendshapes off the
 CPU and onto the NPU, this repo is your starting point: the **conversion
-recipe**, the **compiled NBG binaries**, the **fidelity validation**, and a
-**benchmark harness**.
+recipe**, the **compiled NBG binaries**, the **fidelity validation**, and the
+**benchmarks**. It is a **standalone, application-agnostic toolkit** — you drop
+these models into whatever you're building. *(The eye-contact clock that
+motivated it lives in its own separate repo; nothing here depends on it.)*
 
 ## Status
 
@@ -166,8 +168,8 @@ Full recipe: [convert/README.md](convert/README.md).
 models/      the source MediaPipe models, vendored (face_landmarker.task + 3 TFLite)
 compiled/    6 NBG binaries (fp16 + int16) + generated OpenVX C projects
 convert/     reproducible ACUITY pipeline + numeric validation script
-benchmark/   latency harness + RUNTIME.md (how to run the NBG on the NPU)
-             results/  measured latency.json + fidelity.json
+benchmark/   RUNTIME.md (run the NBG on the NPU) + cpu_permodel_bench.py (CPU baseline)
+             results/  measured latency.json + fidelity.json + power.json
 charts/      chart generator (run after a benchmark to refresh the PNGs)
 docs/        RESEARCH.md — the state-of-the-art survey behind this work
 ```
@@ -215,9 +217,12 @@ matching `--optimize` target.
 - [x] First on-device inference (`vpm_run` against VIPLite v2.0)
 - [x] Latency benchmark, NPU vs CPU (iso-scope) — **int16 wins, 5.6× vs CPU**
 - [x] FP16 root cause via cycle counters — integer-only MAC arrays, unfixable
+- [x] Energy measured at the wall (TC66C) — **NPU ~7× less power than CPU**
 - [ ] Full C runner: anchor decoding, NMS, crop, the 3-model chain
-- [ ] Live demo (the [Watch Me](https://github.com/arnaudlvq/watchme) eye-contact clock that motivated this)
 - [ ] Python path via `tflite-vx-delegate` (exploratory, see RESEARCH.md)
+
+> *Motivation: this was built for an eye-contact clock installation. That app
+> is a separate project — this repo is just the reusable NPU port.*
 
 ## Topics
 
