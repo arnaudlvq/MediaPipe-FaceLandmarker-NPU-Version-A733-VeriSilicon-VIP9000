@@ -1,247 +1,173 @@
 # MediaPipe FaceLandmarker on the VeriSilicon VIP9000 NPU (Allwinner A733)
 
-**An open, self-contained port of Google's MediaPipe FaceLandmarker to a
-VeriSilicon VIP9000 NPU** — face detection, 478-point face mesh, and 52
-blendshapes, compiled and measured on the 3 TOPS NPU of the Allwinner A733
-(Radxa Cubie A7A / A7Z / A7S, Orange Pi 4 Pro).
+A self-contained port of Google's MediaPipe FaceLandmarker (face detection, a
+478 point 3D face mesh, and 52 blendshapes) to the VeriSilicon VIP9000 NPU found
+on the Allwinner A733. It runs on the 3 TOPS NPU of the Radxa Cubie A7A (and the
+A7Z, A7S, Orange Pi 4 Pro). The repository contains the vendored models, the
+compiled network binaries, the conversion recipe, the runtime recipe, and the
+on-device measurements.
 
-> I couldn't find an existing public port when I looked (see
-> [docs/RESEARCH.md](docs/RESEARCH.md)), so I built and measured one and put it
-> here. **If prior work exists that I missed, please open an issue — I'll gladly
-> link it.** The goal is a working, reproducible recipe, not a claim to be first.
-
-![status](https://img.shields.io/badge/conversion-validated-1d9e75)
-![status](https://img.shields.io/badge/on--device-benchmarked-1d9e75)
-![speed](https://img.shields.io/badge/NPU_int16-5.6x_CPU_(iso--scope)-1d9e75)
+![conversion](https://img.shields.io/badge/conversion-validated-1d9e75)
+![benchmarked](https://img.shields.io/badge/on--device-benchmarked-1d9e75)
+![speed](https://img.shields.io/badge/NPU_int16-5.6x_CPU-1d9e75)
 ![energy](https://img.shields.io/badge/energy-~7x_less_than_CPU-1d9e75)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
-![platform](https://img.shields.io/badge/SoC-Allwinner_A733-444)
-![npu](https://img.shields.io/badge/NPU-VeriSilicon_VIP9000-444)
 
----
-
-## TL;DR — measured on real silicon
-
-- ⚡ **The 3-model face pipeline runs in 4.3 ms on the NPU (int16)** — **5.6× faster** than one Cortex-A76, at matched accuracy (0.12 px landmark error).
-- 🔋 **~7× less power than the CPU**, measured at the wall with a USB meter: **+0.11 W** for the NPU vs +0.77 W for the A76 at 15 fps. The whole board runs the artwork at **~2.5 W**.
-- 🪤 **FP16 is a trap on this NPU** — **29× more cycles** than int16 (the NANO-DI's fast MACs are integer-only), *slower than the CPU*. Proven with hardware **cycle counters**, not guessed.
-- 🚫 **BF16 is refused by the hardware**, INT8 is too lossy (1.78 px). **INT16 is the precision to ship** — and it's near-lossless.
-
-The whole thing is reproducible: vendored models, compiled NBG binaries, the exact ACUITY recipe, and the `vpm_run` runtime. Charts and raw JSON below.
-
----
-
-## Why this exists
-
-I went looking for a way to run MediaPipe's face models on this NPU and came up
-empty. A [survey of the toolchain landscape](docs/RESEARCH.md) (19 sources)
-didn't surface a public port to a VIP9000-class NPU — Radxa's own model zoo for
-the A7A ships ~20 models, **none of them MediaPipe** — and there are open
-requests for exactly this capability
-([onnxruntime#28244](https://github.com/microsoft/onnxruntime/issues/28244),
-[Frigate#23418](https://github.com/blakeblackshear/frigate/discussions/23418)).
-That absence may just mean I didn't find it — either way, here's a working one.
-
-If you have an A733 board and want face landmarks / mesh / blendshapes off the
-CPU and onto the NPU, this repo is your starting point: the **conversion
-recipe**, the **compiled NBG binaries**, the **fidelity validation**, and the
-**benchmarks**. It is a **standalone, application-agnostic toolkit** — you drop
-these models into whatever you're building. *(The eye-contact clock that
-motivated it lives in its own separate repo; nothing here depends on it.)*
-
-## Status
-
-| Stage | State |
-|---|---|
-| Extract the 3 TFLite models from `face_landmarker.task` | ✅ done |
-| Import into ACUITY (BlazeFace, Attention Mesh, Blendshapes) | ✅ 0 errors |
-| Quantize (fp16 / bf16 / int16 / int8-pcq) | ✅ done |
-| Export to NBG for the exact A733 NPU target | ✅ 0 errors |
-| Numerically validate vs reference TFLite | ✅ FP16 lossless |
-| Generate the OpenVX C runner projects | ✅ done |
-| **Run on the physical NPU (`vpm_run`, VIPLite v2.0)** | ✅ **done** |
-| **Latency benchmark, NPU vs CPU** | ✅ **done** |
-
-Both halves are now complete: **the models convert losslessly, and they run on
-the physical VIP9000** on a Radxa Cubie A7A (A733, kernel `5.15.147-21-a733`,
-`/dev/vipcore`, ai-sdk VIPLite v2.0). The headline result overturns the naive
-expectation — see below.
+I looked for an existing public port to a VIP9000 class NPU and did not find one
+(see [docs/RESEARCH.md](docs/RESEARCH.md)). If prior work exists that I missed,
+please open an issue and I will link it. The goal is a working, reproducible
+recipe and honest measurements, not a claim to be first.
 
 ## Results
 
-### Conversion fidelity (measured)
+All numbers were measured on a Radxa Cubie A7A (Allwinner A733, kernel
+`5.15.147-21-a733`, `/dev/vipcore`, ai-sdk VIPLite v2.0). The NPU figures come
+from the `vpm_run` tool, averaged over 100 loops. The CPU figures use the raw
+per-model TFLite inference (tflite-runtime, XNNPACK, median of 100 loops, pinned
+to a Cortex-A76). Both sides measure pure inference, so the comparison is at the
+same scope.
 
-Every converted model was compared against the reference TFLite/XNNPACK output
-on identical inputs. **FP16 and INT16 are both near-lossless**; naive INT8
-wrecks the landmark and detector heads — exactly the trade-off this chart makes
-visible:
-
-![fidelity](charts/fidelity.png)
-
-Headline numbers (mean abs error vs TFLite):
-
-| model | output | FP16 | INT16 | INT8 (pcq) |
-|---|---|---|---|---|
-| face_detector | box logits | 0.25 | **0.25** | 1.97 ❌ |
-| face_landmarks | 478 pts (px) | 0.09 px | **0.12 px** | 1.78 px ❌ |
-| face_blendshapes | 52 scores | 0.0002 | **0.0001** | 0.0095 |
-
-INT8 is rejected. FP16 and INT16 are both accurate enough — **but which one you
-actually run should be decided by _speed on the real silicon_, not fidelity
-alone. That is where the on-device benchmark below is decisive.**
-
-### On-device latency: NPU vs CPU (measured, iso-scope)
+### Latency
 
 ![latency](charts/latency_npu_vs_cpu.png)
 
-NPU measured with `vpm_run` (VIPLite v2.0, averaged over 100 loops) on the
-physical VIP9000. CPU measured at the **same scope** — raw per-model
-TFLite/XNNPACK fp32 inference (tflite-runtime, median of 100 loops, pinned to a
-Cortex-A76 with `taskset`). Pure inference vs pure inference, no pre/post:
+| model | NPU int16 | CPU fp32 (1x A76) | CPU fp32 (2x A76) | NPU fp16 |
+|---|--:|--:|--:|--:|
+| face_detector | 0.67 ms | 3.86 ms | 2.39 ms | 21.8 ms |
+| face_landmarks | 3.16 ms | 17.75 ms | 12.84 ms | 98.1 ms |
+| face_blendshapes | 0.48 ms | 2.63 ms | 1.71 ms | 14.6 ms |
+| 3-model total | **4.31 ms** | 24.2 ms | 16.9 ms | 134 ms |
 
-| model | NPU **int16** | CPU fp32 (1× A76) | CPU fp32 (2× A76) | NPU fp16 |
-|---|---|---|---|---|
-| face_detector | **0.67 ms** | 3.86 ms | 2.39 ms | 21.8 ms |
-| face_landmarks | **3.16 ms** | 17.75 ms | 12.84 ms | 98.1 ms |
-| face_blendshapes | **0.48 ms** | 2.63 ms | 1.71 ms | 14.6 ms |
-| **3-model total** | **4.31 ms** | 24.2 ms | 16.9 ms | 134 ms |
+INT16 on the NPU runs the three models in 4.31 ms. That is 5.6 times faster than
+one Cortex-A76 core and 3.9 times faster than both, at matched output accuracy
+(the INT16 mesh is 0.12 px from the fp32 reference). Against MediaPipe's full CPU
+frame, which also does letterboxing, anchor decoding, NMS, and cropping, the
+end-to-end gap is about 8 times. The two scopes are reported separately on
+purpose.
 
-**The counter-intuitive results — the whole point of running it on real
-silicon:**
+### Precision: INT16 is the one to deploy
 
-- **NPU int16 is 5.6× faster than one A76 core, 3.9× faster than both** — at
-  matched output accuracy (int16 is 0.12 px off the fp32 reference). Against
-  MediaPipe's full CPU frame (~35 ms end-to-end including pre/post) the gap is
-  ~8×, a different scope stated separately on purpose. And the NPU offloads the
-  CPU entirely — the thermal/power win that matters for always-on installs.
-- **FP16 is a trap on this NPU, and the cycle counters prove why:** the fp16
-  graph executes **~29× more cycles** than int16 (98.4M vs 3.4M for the
-  landmarks model) at the same effective clock (~1 GHz). The NANO-DI's fast MAC
-  arrays are **integer-only**; fp16 convolutions fall back to a slow
-  programmable path. This is a hardware mapping limit — no export flag fixes it.
-  On a bigger VIP9000 with a real FP16 pipe the story would differ, but on this
-  chip **INT16 is the correct precision**, and it costs no meaningful accuracy.
-- **I/O overhead is small:** wall time vs pure-compute time differ by ~0.25 ms
-  on the largest model (256×256×3 input DMA + output read + dispatch), ~7% of
-  compute. Network create/prepare (~6 ms) happens once at startup. A chained
-  3-model runner should budget ~5-6 ms/frame NPU-side plus CPU pre/post
-  (letterbox, anchor decode + NMS, crop, tensor packing).
+We converted the models at every precision the toolchain offers and measured
+each against the reference TFLite output on identical inputs.
 
-Raw numbers, cycle counts and method: [benchmark/results/latency.json](benchmark/results/latency.json).
+![fidelity](charts/fidelity.png)
 
-### Energy: the NPU's real win (measured at the wall)
+| precision | landmark error vs reference | verdict |
+|---|--:|---|
+| FP16 | 0.09 px | accurate, but slow on this NPU (see below) |
+| **INT16** | **0.12 px** | **accurate and fast: the one to deploy** |
+| INT8 (per-channel) | 1.78 px | too lossy, rejected |
+| BF16 | not measurable | rejected by the hardware (see below) |
 
-Latency is only half the story. Power was measured on the whole board with an
-in-line **RuiDeng TC66C** USB meter (30 s averages, CPU utilisation tracked to
-confirm the watts are the NPU's, not hidden CPU work):
+FP16 and INT16 are both near lossless. INT8 breaks the detector and landmark
+heads. The choice between FP16 and INT16 is therefore decided by speed on the
+silicon, not by accuracy.
+
+FP16 is a trap on this chip. The FP16 landmarks graph executes 98.4 million
+cycles per inference against 3.4 million for INT16, a factor of 29, at the same
+effective clock near 1 GHz. The reason is architectural: the NANO-DI's fast MAC
+arrays are integer only, so FP16 convolutions fall back to a slow programmable
+path. No export flag changes this. On a larger VIP9000 with a real FP16 pipeline
+the result would differ, but on this chip FP16 is slower than the CPU. We
+confirmed this with hardware cycle counters rather than inferring it.
+
+BF16 quantizes correctly in software but the NBG export is rejected by the
+NANO-DI capability check (`VX_ERROR_NOT_SUPPORTED`), reproduced on three models.
+The chip does not accept BF16 tensors.
+
+Cycle counts and method: [benchmark/results/latency.json](benchmark/results/latency.json).
+
+### Energy
+
+Power was measured on the whole board with an in-line RuiDeng TC66C USB meter
+(30 second averages, CPU utilisation tracked to confirm the draw is the NPU's).
 
 ![energy](charts/energy_npu_vs_cpu.png)
 
-- Running the same 3-model face pipeline at **15 fps**, the NPU adds **+0.11 W**
-  over the 2.42 W idle, versus **+0.77 W** for a single Cortex-A76 — **~7× less
-  power for the same result**, at matched output accuracy.
-- The NPU's board power is **nearly flat from 5 to 60 fps** (2.50 → 2.59 W): you
-  can raise the inference rate almost for free up to ~60 fps.
-- During NPU inference the A76 sits at **1–3 % utilisation** (416–627 MHz), so
-  the measured watts are genuinely the NPU's. A native chained C runner (no
-  per-call `vpm_run` setup) would push them a little lower still.
+Running the three-model pipeline at 15 fps, the NPU adds 0.11 W over the 2.42 W
+idle, against 0.77 W for one Cortex-A76. That is about 7 times less power for the
+same result. The NPU's board power stays nearly flat from 5 to 60 fps (2.50 W to
+2.59 W), so the inference rate can be raised with almost no energy cost up to
+about 60 fps. During NPU inference the A76 stays at 1 to 3 percent utilisation,
+which confirms the measured watts are the NPU's and not hidden CPU work.
 
 Raw numbers: [benchmark/results/power.json](benchmark/results/power.json).
 
 ## How it works
 
+The FaceLandmarker is three models chained through the VIPLite runtime, each
+compiled to an NBG (VeriSilicon network binary graph):
+
 ```
-camera frame
-   │
-   ▼  128×128            ▼  256×256 (face crop)        ▼  146 landmarks (px)
-┌──────────────┐   ┌───────────────────────┐   ┌────────────────────┐
-│ face_detector│──▶│ face_landmarks_detector│──▶│  face_blendshapes  │
-│  (BlazeFace) │   │   (Attention Mesh)     │   │   (MLP-Mixer)      │
-└──────────────┘   └───────────────────────┘   └────────────────────┘
-   896 anchors          478 × 3D points              52 scores (eyeLook*, …)
+camera frame  ->  face_detector (BlazeFace, 128x128)  ->  896 anchors
+              ->  face_landmarks_detector (Attention Mesh, 256x256)  ->  478 points
+              ->  face_blendshapes (MLP-Mixer, 146 points)  ->  52 scores
 ```
 
-All three are compiled to **NBG** (VeriSilicon network binary graph) and chained
-through the VIPLite runtime. The non-obvious bits that took digging:
+Three details took most of the work:
 
-- The **`float16` quantizer** in ACUITY 6.30.22 (undocumented by Radxa) makes
-  the conversion lossless — but **`int16` is the one you deploy**: on the
-  NANO-DI it is ~30× faster for near-identical accuracy (see the benchmark).
-- The **NPU target** for the A733 is `VIP9000NANODI_PID0X1000003B`.
-- The **146-landmark subset** fed to the blendshapes model, extracted from
-  MediaPipe's `face_blendshapes_graph.cc` ([convert/landmarks_subset.py](convert/landmarks_subset.py)).
+1. The `float16` quantizer in ACUITY 6.30.22 makes the conversion lossless, but
+   `int16` is what you deploy: it is about 30 times faster on the NANO-DI for
+   near-identical accuracy.
+2. The NPU target for the A733 is `VIP9000NANODI_PID0X1000003B`.
+3. The blendshapes model takes a 146-landmark subset, extracted from MediaPipe's
+   `face_blendshapes_graph.cc` ([convert/landmarks_subset.py](convert/landmarks_subset.py)).
 
-Full recipe: [convert/README.md](convert/README.md).
+Full conversion recipe: [convert/README.md](convert/README.md).
+
+## Getting started
+
+The compiled binaries in `compiled/*/network_binary.nb` run today with the
+`vpm_run` tool from ai-sdk. The copy-paste recipe (driver check, library install,
+build, benchmark loop) is in [benchmark/RUNTIME.md](benchmark/RUNTIME.md).
+
+To reproduce the conversion, the models are already vendored in `models/`, so you
+go straight to ACUITY (docker image `ubuntu-npu:v2.0.10.2`, target
+`VIP9000NANODI_PID0X1000003B`). See [convert/README.md](convert/README.md) for
+the exact `pegasus` commands.
+
+```bash
+python convert/prepare_workspaces.py    # build the calibration workspaces
+# pegasus import, quantize (float16 or int16), export ovxlib  (see convert/README.md)
+python charts/make_charts.py            # refresh the charts from benchmark/results/
+```
 
 ## Repository layout
 
 ```
 models/      the source MediaPipe models, vendored (face_landmarker.task + 3 TFLite)
-compiled/    6 NBG binaries (fp16 + int16) + generated OpenVX C projects
-convert/     reproducible ACUITY pipeline + numeric validation script
-benchmark/   RUNTIME.md (run the NBG on the NPU) + cpu_permodel_bench.py (CPU baseline)
-             results/  measured latency.json + fidelity.json + power.json
-charts/      chart generator (run after a benchmark to refresh the PNGs)
-docs/        RESEARCH.md — the state-of-the-art survey behind this work
+compiled/    6 NBG binaries (fp16 and int16) plus the generated OpenVX C projects
+convert/     the reproducible ACUITY pipeline and the numeric validation script
+benchmark/   RUNTIME.md (run the NBG) and cpu_permodel_bench.py (the CPU baseline)
+             results/  measured latency.json, fidelity.json, power.json
+charts/      the chart generator (run after a benchmark to refresh the PNGs)
+docs/        RESEARCH.md, the survey of the toolchain landscape behind this work
 ```
 
-**Self-contained by design.** The models are *vendored* in `models/` and the
-compiled NBG in `compiled/`, so the repo keeps working even if the upstream
-MediaPipe download, the ai-sdk mirror, or Radxa's model zoo disappear. The only
-things you cannot legally vendor are the two proprietary VeriSilicon toolchains,
-so they are pinned by exact version instead:
-- **conversion**: Allwinner ACUITY docker `ubuntu-npu:v2.0.10.2` (target
-  `VIP9000NANODI_PID0X1000003B`) — see [convert/README.md](convert/README.md).
-- **runtime**: ai-sdk VIPLite **v2.0** (`libNBGlinker.so`, `libVIPhal.so`) + the
-  `/dev/vipcore` kernel driver from the A733 BSP — see
-  [benchmark/RUNTIME.md](benchmark/RUNTIME.md).
+The repository is self-contained: the models are vendored and the NBG are
+committed, so it keeps working even if the upstream MediaPipe download or the
+ai-sdk mirror move. The two proprietary VeriSilicon pieces cannot be vendored, so
+they are pinned by exact version instead. Conversion uses the ACUITY docker image
+`ubuntu-npu:v2.0.10.2`. Runtime uses ai-sdk VIPLite v2.0 (`libNBGlinker.so`,
+`libVIPhal.so`) and the `/dev/vipcore` driver from the A733 BSP.
 
-## Run the NBG on the NPU
+## Intended use and limits
 
-The compiled binaries in `compiled/*/network_binary.nb` run today with the
-`vpm_run` tool from ai-sdk. Full copy-paste recipe (driver check, library
-install, build, benchmark loop) is in **[benchmark/RUNTIME.md](benchmark/RUNTIME.md)**.
-
-## Reproduce the conversion
-
-The models are already vendored in `models/`, so you can skip the download and
-go straight to ACUITY. You need the Allwinner ACUITY docker image
-(`ubuntu-npu:v2.0.10.2`) for the A733; see [convert/README.md](convert/README.md)
-for the exact `pegasus` commands. In short:
-
-```bash
-# models/ is already populated; ./fetch_models.sh re-downloads them if ever needed
-python convert/prepare_workspaces.py    # build calibration workspaces
-# ... pegasus import → quantize (float16 | int16) → export ovxlib  (see convert/README.md)
-python charts/make_charts.py            # refresh charts from benchmark/results/
-```
-
-## Hardware
-
-Any **Allwinner A733** board (VeriSilicon VIP9000, 3 TOPS INT8, FP16/BF16/INT16
-native): Radxa Cubie **A7A / A7Z / A7S**, Orange Pi 4 Pro. The compiled NBG are
-target-specific to this NPU; other VIP9000 variants need a re-export with the
-matching `--optimize` target.
-
-## Roadmap
-
-- [x] First on-device inference (`vpm_run` against VIPLite v2.0)
-- [x] Latency benchmark, NPU vs CPU (iso-scope) — **int16 wins, 5.6× vs CPU**
-- [x] FP16 root cause via cycle counters — integer-only MAC arrays, unfixable
-- [x] Energy measured at the wall (TC66C) — **NPU ~7× less power than CPU**
-- [ ] Full C runner: anchor decoding, NMS, crop, the 3-model chain
-- [ ] Python path via `tflite-vx-delegate` (exploratory, see RESEARCH.md)
-
-> *Motivation: this was built for an eye-contact clock installation. That app
-> is a separate project — this repo is just the reusable NPU port.*
+This repository provides the models, the compiled binaries, and the recipe. It
+is application-agnostic: you use these models in whatever you are building. What
+it does not yet include is a single chained C runner that does the CPU
+pre-processing and post-processing (letterbox, anchor decode, NMS, crop) around
+the three NBG. That runner is the next step. The compiled NBG are specific to
+this NPU target; another VIP9000 variant needs a re-export with the matching
+`--optimize` target.
 
 ## Topics
 
-`mediapipe` · `npu` · `verisilicon` · `vip9000` · `allwinner` · `a733` ·
-`radxa` · `edge-ai` · `face-landmarks` · `face-mesh` · `blazeface` · `tflite` ·
-`acuity` · `quantization` · `edge-inference` · `single-board-computer`
+`mediapipe` `npu` `verisilicon` `vip9000` `allwinner` `a733` `radxa` `edge-ai`
+`face-landmarks` `face-mesh` `blazeface` `tflite` `acuity` `quantization`
+`edge-inference` `single-board-computer`
 
-## License & attribution
+## License
 
 Apache-2.0 (see [LICENSE](LICENSE) and [NOTICE](NOTICE)). The compiled binaries
 are derivatives of Google's MediaPipe FaceLandmarker models, distributed under

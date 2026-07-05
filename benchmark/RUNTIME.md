@@ -27,14 +27,14 @@ ls -l /dev/vipcore          # character device -> NPU is exposed
 dmesg | grep -iE 'vip|npu|galcore' | head
 ```
 
-If it is missing, your kernel was not built with the VIP driver — you need the
+If it is missing, your kernel was not built with the VIP driver, you need the
 A733 BSP image (Radxa's official Debian/Ubuntu build has it).
 
 ## 1. Get the VIPLite runtime + vpm_run (ai-sdk)
 
 The runtime libraries and the `vpm_run` harness come from ZIFENG278's ai-sdk,
 which packages Allwinner's `viplite-tina` for the A733. **Pinned: VIPLite
-`v2.0`** — the library path below is the contract; if this repo ever needs it
+`v2.0`**, the library path below is the contract; if this repo ever needs it
 and ai-sdk is gone, the two files you must obtain are `libNBGlinker.so` and
 `libVIPhal.so` from a v2.0 `viplite-tina` for aarch64.
 
@@ -74,7 +74,7 @@ ls -l ./vpm_run                                   # the binary
 tensor(s). Latency is input-independent for a fixed graph, so a zeroed dummy
 input of the right byte size is enough to measure compute time.
 
-Input byte sizes (2 bytes/element — these graphs take a **16-bit** input tensor):
+Input byte sizes (2 bytes/element, these graphs take a **16-bit** input tensor):
 
 | model | input tensor | bytes |
 |---|---|---|
@@ -116,7 +116,7 @@ CPU reference at the same scope (raw per-model TFLite/XNNPACK fp32, pinned to
 one Cortex-A76): **24.2 ms** total (17.75 ms for the landmarks model alone).
 MediaPipe's full CPU frame including pre/post: ≈ 35 ms.
 
-**INT16 is the deploy target** — ~30× faster than FP16 on the NANO-DI (cycle
+**INT16 is the deploy target**, ~30× faster than FP16 on the NANO-DI (cycle
 counters show fp16 executes ~29× more cycles: the MAC arrays are integer-only),
 5.6× faster than the CPU at iso-scope, and near-lossless (0.12 px landmark
 error). I/O overhead is ~0.25 ms per inference (wall vs compute time); network
@@ -124,7 +124,7 @@ create/prepare (~6 ms) is one-time. See the repo README for the full discussion.
 
 ---
 
-## Appendix — the driver script
+## Appendix, the driver script
 
 ```bash
 set +e

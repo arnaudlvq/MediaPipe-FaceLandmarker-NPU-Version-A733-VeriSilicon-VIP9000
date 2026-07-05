@@ -3,16 +3,16 @@
 
 Why this exists: the NPU numbers in benchmark/results/latency.json are pure
 `vip_run_network` compute, per model. To compare fairly, the CPU side must be the
-SAME scope — the raw per-model TFLite inference (XNNPACK on the Cortex-A76), NOT
+SAME scope, the raw per-model TFLite inference (XNNPACK on the Cortex-A76), NOT
 the full end-to-end MediaPipe frame (which also does letterbox, anchor decode,
 NMS, crop, tensor packing). This script times each of the three extracted models
 so we can put NPU-vs-CPU side by side, per model, at matched scope.
 
 Precision note: these MediaPipe models ship as float16 weights; TFLite/XNNPACK
-runs them in float32 by default (full precision — the fidelity reference). We
+runs them in float32 by default (full precision, the fidelity reference). We
 also try to force fp16 compute so we have an iso-PRECISION point against the NPU
 fp16 number. INT16 is not a native XNNPACK CPU path, so "CPU int16" is not a
-meaningful comparison — the CPU's real options are fp32 and fp16.
+meaningful comparison, the CPU's real options are fp32 and fp16.
 
 Usage (on the board):
     pip install ai-edge-litert            # or tflite-runtime
