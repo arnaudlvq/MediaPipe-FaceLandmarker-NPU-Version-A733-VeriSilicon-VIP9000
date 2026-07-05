@@ -1,80 +1,81 @@
-# Porter MediaPipe FaceLandmarker sur le NPU VIP9000 de l'Allwinner A733, état de l'art
+# Porting MediaPipe FaceLandmarker to the Allwinner A733 VIP9000 NPU, state of the art
 
-*Recherche approfondie du 12 juin 2026-5 axes, 19 sources primaires, 25 affirmations
-vérifiées par triple vote adversarial (24 confirmées, 1 réfutée).*
+*Deep research, 2026-06-12. 5 axes, 19 primary sources, 25 claims verified by
+adversarial triple-vote (24 confirmed, 1 refuted).*
 
-## Verdict global
+## Overall verdict
 
-**Personne ne l'a fait publiquement.** Aucun portage de BlazeFace, Face Mesh /
-Attention Mesh ou Blendshapes GHUM sur un NPU VeriSilicon VIP9000 n'existe, ni chez
-Radxa (le [Model Zoo officiel A7A](https://docs.radxa.com/en/cubie/a7a/app-dev/npu-dev/model-zoo)
-compte ~20 modèles : YOLO v3→v26, RetinaFace, MobileNet, ResNet50… zéro modèle
-MediaPipe), ni dans les communautés Khadas (A311D), NXP (i.MX 8M Plus) ou Mesa/Teflon.
-Le prior art le plus proche est RetinaFace (détection de visage seule). La page
-« MediaPipe » des docs Radxa A7A est un simple `pip install mediapipe` CPU.
+**We found no public port.** No port of BlazeFace, Face Mesh / Attention Mesh or
+GHUM Blendshapes to a VeriSilicon VIP9000 NPU appears to exist, neither at Radxa
+(the [official A7A Model Zoo](https://docs.radxa.com/en/cubie/a7a/app-dev/npu-dev/model-zoo)
+lists ~20 models: YOLO v3→v26, RetinaFace, MobileNet, ResNet50… zero MediaPipe
+models), nor in the Khadas (A311D), NXP (i.MX 8M Plus) or Mesa/Teflon
+communities. The closest prior art is RetinaFace (face detection only). The
+"MediaPipe" page of the Radxa A7A docs is a plain CPU `pip install mediapipe`.
 
-→ Ce portage serait une **première publique**, d'où l'intérêt d'un repo de qualité.
+→ We did not find any public prior port, which is why a clean, well-documented
+repo seems worth publishing.
 
-## Les quatre voies
+## The four paths
 
-| Voie | Verdict | Détail |
+| Path | Verdict | Detail |
 |---|---|---|
-| **(a) ACUITY → NBG + VIPLite (C)** | ✅ **Mature, documentée, recommandée** | Seule chaîne documentée de bout en bout par Radxa pour le Cubie A7A. Accepte le TFLite en entrée (pas besoin de passer par ONNX). Scripts `pegasus_import/quantize/inference/export_ovx`. Génère un **projet OpenVX en C**, aligné avec l'objectif de réécriture C. Pas de chemin Python on-device documenté ; les exemples du Model Zoo sont en C++ contre VIPLite 2.0.3.2-AW. |
-| **(b) TIM-VX + tflite-vx-delegate** | ⚠️ **Réelle mais non prouvée sur A733** | Delegate TFLite officiel VeriSilicon, utilisable depuis Python (`load_delegate`), démontré sur Khadas VIM3/A311D, production chez NXP. Supporte VIPLite via le SDK « no-kernel » (≥6.4.22). MAIS : l'A733 n'est pas une carte de référence, le build exige les libs userspace du BSP Allwinner (versions strictement appariées), et des issues ouvertes signalent sorties erronées/segfaults sur certains modèles. |
-| **(c) Mesa Teflon / etnaviv** | ❌ **Morte pour l'A733** | Pile 100 % open-source mais limitée à VIPNano-QI (A311D), VIPNano-SI+ (i.MX 8M Plus) et RK3588 ; CNN UINT8 uniquement ; le VIP9000 de l'A733 n'est pas couvert, et Tomeu Vizoso a pivoté vers Rockchip en 2025. À surveiller à long terme. |
-| **(d) ONNX Runtime / autres** | ❌ **Inexistant** | Pas d'execution provider VIPLite, c'est l'objet de l'[issue ouverte #28244](https://github.com/microsoft/onnxruntime/issues/28244) qui demande exactement le support A733/T527. |
+| **(a) ACUITY → NBG + VIPLite (C)** | ✅ **Mature, documented, recommended** | The only chain documented end to end by Radxa for the Cubie A7A. Accepts TFLite as input (no need to go through ONNX). `pegasus_import/quantize/inference/export_ovx` scripts. Generates an **OpenVX C project**, aligned with the C-rewrite goal. No documented on-device Python path; the Model Zoo examples are C++ against VIPLite 2.0.3.2-AW. |
+| **(b) TIM-VX + tflite-vx-delegate** | ⚠️ **Real but unproven on A733** | Official VeriSilicon TFLite delegate, usable from Python (`load_delegate`), demonstrated on Khadas VIM3/A311D, in production at NXP. Supports VIPLite through the "no-kernel" SDK (≥6.4.22). BUT: the A733 is not a reference board, the build requires the Allwinner BSP userspace libs (strictly matched versions), and open issues report wrong outputs/segfaults on some models. |
+| **(c) Mesa Teflon / etnaviv** | ❌ **Dead for the A733** | Fully open-source stack but limited to VIPNano-QI (A311D), VIPNano-SI+ (i.MX 8M Plus) and RK3588; UINT8 CNN only; the A733's VIP9000 is not covered, and Tomeu Vizoso pivoted to Rockchip in 2025. Worth watching long term. |
+| **(d) ONNX Runtime / others** | ❌ **Nonexistent** | No VIPLite execution provider, which is the subject of [open issue #28244](https://github.com/microsoft/onnxruntime/issues/28244) asking for exactly A733/T527 support. |
 
-## Le risque technique n° 1 : la couverture d'opérateurs
+## The #1 technical risk: operator coverage
 
-Les ops CNN de **BlazeFace** et du tronc Face Mesh passent partout (Conv2d,
-DepthwiseConv2d, Prelu, Reshape, Pad, FullyConnected : tous « yes » dans
+The CNN ops of **BlazeFace** and the Face Mesh trunk pass everywhere (Conv2d,
+DepthwiseConv2d, Prelu, Reshape, Pad, FullyConnected: all "yes" in
 [op_status.md](https://github.com/VeriSilicon/tflite-vx-delegate/blob/main/op_status.md)).
-En revanche **GELU et LayerNorm sont absents** de la matrice d'opérateurs du delegate
-(vérifié dans le code : zéro occurrence dans op_map.cc), or ce sont les briques des
-mécanismes d'attention d'**Attention Mesh** et du **Blendshapes GHUM** (type MLP-Mixer).
-La faisabilité de conversion de ces deux modèles n'est tranchée nulle part : **seul un
-essai réel de `pegasus_import` le dira**.
+However **GELU and LayerNorm are missing** from the delegate's operator matrix
+(checked in the code: zero occurrences in op_map.cc), and those are the building
+blocks of the attention mechanisms in **Attention Mesh** and the **GHUM
+Blendshapes** (MLP-Mixer style). The conversion feasibility of these two models
+is settled nowhere: **only a real `pegasus_import` attempt will tell**.
 
-Plans de repli si ça bloque : (1) ne porter que BlazeFace + landmarks et garder le
-modèle blendshapes sur CPU (il prend les *landmarks* en entrée, pas l'image, il est
-minuscule) ; (2) substituer Face Mesh V1 (sans attention) au V2.
+Fallback plans if it blocks: (1) port only BlazeFace + landmarks and keep the
+blendshapes model on CPU (it takes *landmarks* as input, not the image, and is
+tiny); (2) substitute Face Mesh V1 (no attention) for V2.
 
-## Quantization : la stratégie
+## Quantization: the strategy
 
-Modes ACUITY documentés sur A7A : `uint8`, `pcq` (int8 per-channel), `int16`, `bf16`,
-`float` (aucune quantization), + quantization hybride. **FP16 n'est pas une cible
-explicite** (les modèles MediaPipe sont livrés en float16), les options 16 bits sont
-BF16/INT16, ou le mode `float` dont l'exécution interne n'est pas spécifiée.
+ACUITY modes documented on A7A: `uint8`, `pcq` (per-channel int8), `int16`,
+`bf16`, `float` (no quantization), + hybrid quantization. **FP16 is not an
+explicit target** (the MediaPipe models ship as float16), the 16-bit options are
+BF16/INT16, or the `float` mode whose internal execution is unspecified.
 
-Piège documenté par Radxa lui-même : dans leur exemple MobileNetV2, **l'uint8 simple
-dégrade la précision** (mauvaise classe prédite), tandis que `pcq` et `int16` restent
-conformes au float. Pour des modèles de *régression de landmarks* (plus sensibles
-qu'un classifieur), partir directement sur **pcq ou int16**, avec la
-[page d'optimisation de précision](https://docs.radxa.com/en/cubie/a7a/app-dev/npu-dev/cubie-quant-acc-improve)
-(quantization mixte) en recours.
+Pitfall documented by Radxa itself: in their MobileNetV2 example, **plain uint8
+degrades accuracy** (wrong predicted class), while `pcq` and `int16` stay
+faithful to float. For *landmark regression* models (more sensitive than a
+classifier), start directly on **pcq or int16**, with the
+[precision optimization page](https://docs.radxa.com/en/cubie/a7a/app-dev/npu-dev/cubie-quant-acc-improve)
+(mixed quantization) as a fallback.
 
-## Performances : aucune donnée publiée, on défrichera
+## Performance: no published data, we broke ground
 
-Aucun chiffre de latence n'existe pour des modèles type BlazeFace/Face Mesh sur le
-VIP9000 3 TOPS de l'A733. Seules références de la famille : A311D 5 TOPS, MobileNetV1
-≈ 5,5-6,6 ms. Question ouverte assumée : pour des modèles aussi petits (1-5 MFLOPs),
-le gain NPU dépasse-t-il le coût de transfert mémoire face aux A76 + XNNPACK ? **C'est
-exactement ce que notre banc (`npu/bench/`) mesurera**, latence p50/p95/p99, fps,
-températures, en pic et en endurance 2 h, CPU vs NPU sur la même grille. Outils
-on-device complémentaires : `vpm_run` et `NBinfo` (documentés par Radxa, aucun
-résultat publié trouvé).
+No latency figure exists for BlazeFace/Face Mesh style models on the A733's 3
+TOPS VIP9000. The only references in the family: A311D 5 TOPS, MobileNetV1 ≈
+5.5-6.6 ms. Assumed open question: for models this small (1-5 MFLOPs), does the
+NPU gain beat the memory-transfer cost versus the A76 + XNNPACK? **That is
+exactly what our bench (`npu/bench/`) measured**, p50/p95/p99 latency, fps,
+temperatures, at peak and over endurance, CPU vs NPU on the same grid.
+Complementary on-device tools: `vpm_run` and `NBinfo` (documented by Radxa, no
+published result found).
 
-## Réserves d'honnêteté
+## Honesty caveats
 
-- La conversion d'Attention Mesh et du Blendshapes GHUM est **non prouvée**, risque
-  principal, à lever en premier (essai de conversion avant toute écriture de code C).
-- Le mode `float` d'ACUITY tourne peut-être en FP16 natif sur le NPU, vitesse inconnue.
-- Les chiffres A311D ne se transposent pas directement (génération NPU différente).
-- « Documenté » ≠ « fiable » : issues ouvertes sur le delegate (sorties erronées INT8,
-  segfaults sur certains modèles).
-- Docs Radxa sujettes au link rot (une URL a changé pendant la recherche même).
+- Converting Attention Mesh and the GHUM Blendshapes was **unproven** going in,
+  the main risk, cleared first (a conversion attempt before writing any C code).
+- ACUITY's `float` mode may run as native FP16 on the NPU, speed unknown.
+- The A311D figures do not transpose directly (different NPU generation).
+- "Documented" ≠ "reliable": open issues on the delegate (wrong INT8 outputs,
+  segfaults on some models).
+- Radxa docs subject to link rot (one URL changed during the research itself).
 
-## Sources principales
+## Main sources
 
 [Radxa NPU dev (A7A)](https://docs.radxa.com/en/cubie/a7a/app-dev/npu-dev) ·
 [ACUITY usage](https://docs.radxa.com/en/cubie/a7a/app-dev/npu-dev/cubie-acuity-usage) ·
@@ -83,7 +84,7 @@ résultat publié trouvé).
 [TIM-VX](https://github.com/VeriSilicon/TIM-VX) ·
 [Khadas VIM3 vx-tflite](https://docs.khadas.com/products/sbc/vim3/npu/vx-tflite) ·
 [Mesa Teflon](https://docs.mesa3d.org/teflon.html) ·
-[Blog Tomeu Vizoso](https://blog.tomeuvizoso.net/) ·
+[Tomeu Vizoso blog](https://blog.tomeuvizoso.net/) ·
 [onnxruntime #28244](https://github.com/microsoft/onnxruntime/issues/28244) ·
 [Frigate #23418](https://github.com/blakeblackshear/frigate/discussions/23418) ·
 [acuitylite (VeriSilicon)](https://verisilicon.github.io/acuitylite/README.html)

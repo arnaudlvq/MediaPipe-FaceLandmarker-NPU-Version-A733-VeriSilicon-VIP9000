@@ -1,104 +1,104 @@
-# Conversion ACUITY : face_landmarker → NBG (NPU VIP9000 / Allwinner A733)
+# ACUITY conversion: face_landmarker → NBG (VIP9000 NPU / Allwinner A733)
 
-> **STATUT (13/06/2026) : chaîne validée de bout en bout.** Les 3 modèles
-> passent import → quantize pcq int8 → export NBG avec zéro erreur.
-> Artefacts archivés dans `../compiled/<model>_nbg_{fp16,int16}/`
-> (`network_binary.nb` + projet C généré). Le dossier `work/` est un scratch
-> de build (gitignoré) ; les livrables compilés sont déplacés dans
+> **STATUS (2026-06-13): chain validated end to end.** All 3 models pass
+> import → quantize pcq int8 → NBG export with zero errors.
+> Artifacts archived in `../compiled/<model>_nbg_{fp16,int16}/`
+> (`network_binary.nb` + generated C project). The `work/` folder is a build
+> scratch (gitignored); the compiled deliverables are moved into
 > `npu/compiled/`.
-> Cible A733 : `--optimize VIP9000NANODI_PID0X1000003B`
+> A733 target: `--optimize VIP9000NANODI_PID0X1000003B`
 > `--viv-sdk ~/Vivante_IDE/VivanteIDE5.11.0/cmdtools` (image
-> `ubuntu-npu:v2.0.10.2`, ACUITY 6.30.22). Les wrappers `pegasus_*.sh` de la
-> doc Radxa ne sont pas dans l'image : appeler `pegasus.py` directement
-> (commandes ci-dessous mises à jour).
-> **Validation numérique (13/06, vs TFLite de référence, même entrée)**, > grille complète des précisions (erreur moyenne absolue) :
+> `ubuntu-npu:v2.0.10.2`, ACUITY 6.30.22). The `pegasus_*.sh` wrappers from the
+> Radxa docs are not in the image: call `pegasus.py` directly (commands below
+> updated).
+> **Numerical validation (06-13, vs reference TFLite, same input)**, full
+> precision grid (mean absolute error):
 >
-> | sortie | float import | **fp16** | bf16 | int16 | pcq int8 |
+> | output | float import | **fp16** | bf16 | int16 | pcq int8 |
 > |---|---|---|---|---|---|
-> | detector (logits) | 0,248 | 0,248 | 0,245 | 0,251 | 1,97 ❌ |
-> | landmarks (px) | 0,089 | **0,093** | 0,217 | 0,122 | 1,78 ❌ |
-> | blendshapes | 2e-5 | **2e-4** | 0,002 | 1e-4 | 0,0095 |
+> | detector (logits) | 0.248 | 0.248 | 0.245 | 0.251 | 1.97 ❌ |
+> | landmarks (px) | 0.089 | **0.093** | 0.217 | 0.122 | 1.78 ❌ |
+> | blendshapes | 2e-5 | **2e-4** | 0.002 | 1e-4 | 0.0095 |
 >
-> **Choix : fp16 partout** (quantizer `float16`, non documenté chez Radxa
-> mais présent dans ACUITY 6.30.22 ; c'est la précision native des modèles
-> MediaPipe, sans perte, et le VIP9000 exécute le FP16 nativement).
-> **int16 compilé en alternative vitesse** (l'int8/int16 a ~2× le débit fp16
-> sur ce NPU, le benchmark on-device départagera). pcq int8 rejeté (dégrade
-> detector et landmarks). NBG des deux variantes archivés dans
-> `npu/compiled/<model>_nbg_{fp16,int16}/`.
+> **Early choice (superseded, see note): fp16 everywhere** (quantizer `float16`,
+> undocumented at Radxa but present in ACUITY 6.30.22; it is the native
+> precision of the MediaPipe models and lossless). **int16 also compiled.** The
+> on-device benchmark later reversed this: on the NANO-DI, fp16 falls back to a
+> slow programmable path (~29x the cycles), so **int16 is the deploy target**.
+> pcq int8 rejected (degrades detector and landmarks). NBG of both variants
+> archived in `npu/compiled/<model>_nbg_{fp16,int16}/`.
 >
-> Versions des modèles : vérifié sur GCS, le bucket `mediapipe-models` ne
-> contient que `float16/1/` = `latest` (2023-05-03, etag identique). Aucun
-> bundle public plus récent n'existe ; le « blendshapes v3 » (issue MediaPipe
-> #5329) n'a jamais été publié.
+> Model versions: verified on GCS, the `mediapipe-models` bucket only contains
+> `float16/1/` = `latest` (2023-05-03, identical etag). No newer public bundle
+> exists; the "blendshapes v3" (MediaPipe issue #5329) was never published.
 >
-> ⚠️ Calibration des modes int8/int16 encore monotone (augmentations d'une
-> seule photo), sans objet pour fp16 (pas de calibration nécessaire).
+> ⚠️ int8/int16 calibration still monotonic (augmentations from a single photo),
+> moot for fp16 (no calibration needed).
 
-Plan de conversion des 3 modèles TFLite extraits de `face_landmarker.task`
-(dans `npu/models/`) vers le format NBG exécutable par le NPU du Cubie A7A.
+Conversion plan for the 3 TFLite models extracted from `face_landmarker.task`
+(in `npu/models/`) into the NBG format the Cubie A7A NPU can execute.
 
-## Autopsie des modèles (12/06/2026)
+## Model autopsy (2026-06-12)
 
-| Modèle | Entrée | Sorties | Opérateurs | Verdict |
+| Model | Input | Outputs | Operators | Verdict |
 |---|---|---|---|---|
-| `face_detector` (BlazeFace, 224 Ko) | `input` 1×128×128×3 f32 | `regressors` 1×896×16, `classificators` 1×896×1 | Conv2D, DWConv, ReLU, Add, Pad, MaxPool, Reshape, Concat | CNN pur ✅ |
-| `face_landmarks_detector` (2,4 Mo) | `input_12` 1×256×256×3 f32 | `Identity` 1×1×1×1434 (478 pts ×3), `Identity_1` (présence), `Identity_2` | Conv2D, PReLU, DWConv, Add, MaxPool, Pad, Logistic, Reshape | CNN pur ✅ (pas d'op d'attention exotique) |
-| `face_blendshapes` (933 Ko) | `serving_default_input_points:0` 1×146×2 f32 | `StatefulPartitionedCall:0` [52] | Conv 1×1, Mul/Add/Sub, Mean, SquaredDifference, Rsqrt, Transpose, StridedSlice, Logistic | MLP-Mixer, LayerNorm **déjà décomposé en primitives** ✅ |
+| `face_detector` (BlazeFace, 224 KB) | `input` 1×128×128×3 f32 | `regressors` 1×896×16, `classificators` 1×896×1 | Conv2D, DWConv, ReLU, Add, Pad, MaxPool, Reshape, Concat | pure CNN ✅ |
+| `face_landmarks_detector` (2.4 MB) | `input_12` 1×256×256×3 f32 | `Identity` 1×1×1×1434 (478 pts ×3), `Identity_1` (presence), `Identity_2` | Conv2D, PReLU, DWConv, Add, MaxPool, Pad, Logistic, Reshape | pure CNN ✅ (no exotic attention op) |
+| `face_blendshapes` (933 KB) | `serving_default_input_points:0` 1×146×2 f32 | `StatefulPartitionedCall:0` [52] | Conv 1×1, Mul/Add/Sub, Mean, SquaredDifference, Rsqrt, Transpose, StridedSlice, Logistic | MLP-Mixer, LayerNorm **already decomposed into primitives** ✅ |
 
-Les ~370 `DEQUANTIZE` sont le stockage float16 des poids (motif standard des
-modèles MediaPipe), à plier à l'import ou à neutraliser en re-sérialisant en
-float32 si pegasus bronche.
+The ~370 `DEQUANTIZE` ops are the float16 weight storage (the standard MediaPipe
+model pattern), to be folded at import or neutralized by re-serializing to
+float32 if pegasus balks.
 
-## Étape 0, récupérer l'outillage (action manuelle, une fois)
+## Step 0, get the tooling (manual, one time)
 
-L'image Docker ACUITY pour l'A733 est distribuée par Allwinner :
+The ACUITY Docker image for the A733 is distributed by Allwinner:
 
-1. Ouvrir <https://netstorage.allwinnertech.com:5001/sharing/Mh23BhPHq> dans
-   un navigateur (interface Synology, téléchargement scripté impossible).
-2. Télécharger `docker_images_v2.0.x.zip` (contient `ubuntu-npu:v2.0.10.1`).
-3. Le déposer dans le dossier parent du projet, puis :
+1. Open <https://netstorage.allwinnertech.com:5001/sharing/Mh23BhPHq> in a
+   browser (Synology interface, scripted download not possible).
+2. Download `docker_images_v2.0.x.zip` (contains `ubuntu-npu:v2.0.10.1`).
+3. Drop it in the project parent folder, then:
 
 ```bash
 unzip docker_images_v2.0.x.zip
-docker load -i ubuntu-npu_v2.0.10.1.tar     # nom exact selon l'archive
+docker load -i ubuntu-npu_v2.0.10.1.tar     # exact name depends on the archive
 ```
 
-Note Apple Silicon : l'image est x86_64 → activer « Use Rosetta for x86_64
-emulation » dans Docker Desktop (Settings → General). L'émulation suffit pour
-la conversion (c'est du travail offline, la vitesse importe peu).
+Apple Silicon note: the image is x86_64, so enable "Use Rosetta for x86_64
+emulation" in Docker Desktop (Settings → General). Emulation is enough for the
+conversion (offline work, speed does not matter much).
 
-## Étape 1, workspace pegasus par modèle
+## Step 1, one pegasus workspace per model
 
-Chaque modèle a son dossier (généré par `prepare_workspaces.py`) :
+Each model has its own folder (generated by `prepare_workspaces.py`):
 
 ```
 npu/convert/work/
 ├── face_detector/
 │   ├── face_detector.tflite
-│   ├── dataset.txt              # liste d'images de calibration
-│   ├── inputs_outputs.txt       # noms des tenseurs d'E/S
-│   └── calib/...                # crops 128×128
-├── face_landmarks_detector/     # idem, crops 256×256
-└── face_blendshapes/            # calibration = vecteurs de landmarks (npy)
+│   ├── dataset.txt              # list of calibration images
+│   ├── inputs_outputs.txt       # names of the I/O tensors
+│   └── calib/...                # 128×128 crops
+├── face_landmarks_detector/     # same, 256×256 crops
+└── face_blendshapes/            # calibration = landmark vectors (npy)
 ```
 
-Normalisation d'entrée (à reporter dans `*_inputmeta.yml` après l'import) :
+Input normalization (to carry into `*_inputmeta.yml` after import):
 
-| Modèle | mean | scale | note |
+| Model | mean | scale | note |
 |---|---|---|---|
 | face_detector | 127.5 127.5 127.5 | 1/127.5 ≈ 0.007843 | RGB → [-1, 1] |
 | face_landmarks_detector | 0 0 0 | 1/255 ≈ 0.003922 | RGB → [0, 1] |
-| face_blendshapes | 0 | 1.0 | landmarks bruts (pas une image) |
+| face_blendshapes | 0 | 1.0 | raw landmarks (not an image) |
 
-## Étape 2, séquence pegasus (dans le conteneur)
+## Step 2, pegasus sequence (inside the container)
 
 ```bash
 docker run --platform linux/amd64 --ipc=host -itd \
     -v $(pwd)/npu/convert/work:/workspace \
     --name acuity ubuntu-npu:v2.0.10.2 /bin/bash
 
-# Dans le conteneur, pour chaque modèle (cwd = dossier du modèle) :
+# Inside the container, for each model (cwd = the model folder):
 PEGASUS=~/acuity-toolkit-whl-6.30.22/bin/pegasus.py
 cd /workspace/face_detector
 
@@ -107,7 +107,7 @@ python3 $PEGASUS import tflite --model face_detector.tflite \
 
 python3 $PEGASUS generate inputmeta --model face_detector.json \
     --input-meta-output face_detector_inputmeta.yml
-# éditer le yml : mean/scale (table ci-dessus) ; blendshapes : category
+# edit the yml: mean/scale (table above); blendshapes: category
 # undefined + preproc_type TENSOR
 
 python3 $PEGASUS quantize --model face_detector.json \
@@ -123,32 +123,33 @@ python3 $PEGASUS export ovxlib --model face_detector.json \
     --pack-nbg-unify          # → ../face_detector_nbg_unify/network_binary.nb + C
 ```
 
-Stratégie de quantization (cf. ../RESEARCH.md) : `pcq` ou `int16` d'emblée, l'exemple Radxa documente que l'uint8 naïf dégrade la précision. Si la
-précision des landmarks chute : quantization hybride (page « Quantization
-Precision Optimization » de Radxa), voire `bf16`.
+Quantization strategy (see ../RESEARCH.md): `pcq` or `int16` from the start, the
+Radxa example documents that naive uint8 degrades accuracy. If the landmark
+accuracy drops: hybrid quantization (Radxa's "Quantization Precision
+Optimization" page), or even `bf16`.
 
-## Étape 3, validation numérique
+## Step 3, numerical validation
 
-Comparer, sur les mêmes entrées : sorties TFLite/XNNPACK (référence CPU) vs
-sorties pegasus_inference quantifiées. Critère : erreur moyenne sur les 478
-landmarks < 1 px à 256×256, et erreur absolue < 0,02 sur les 52 blendshapes
-(l'hystérésis de l'app absorbe ce bruit sans changer les décisions).
+Compare, on the same inputs: TFLite/XNNPACK outputs (CPU reference) vs quantized
+pegasus_inference outputs. Criterion: mean error over the 478 landmarks < 1 px at
+256×256, and absolute error < 0.02 over the 52 blendshapes (the app's hysteresis
+absorbs that noise without changing the decisions).
 
-## Étape 4, intégration C (après validation)
+## Step 4, C integration (after validation)
 
-`pegasus_export_ovx` génère un projet C OpenVX ; les exemples du Model Zoo
-Radxa (C++/VIPLite, CMake) servent de gabarit pour le runner on-device.
-Pré/post-traitement à réimplémenter : letterbox + normalisation, décodage des
-ancres BlazeFace (896 ancres SSD), sous-ensemble des 146 landmarks d'entrée du
-modèle blendshapes, matrice de transformation faciale (géométrie pure,
+`pegasus_export_ovx` generates an OpenVX C project; the Radxa Model Zoo examples
+(C++/VIPLite, CMake) serve as a template for the on-device runner.
+Pre/post-processing to reimplement: letterbox + normalization, BlazeFace anchor
+decoding (896 SSD anchors), the 146-landmark subset fed to the blendshapes
+model, and the facial transform matrix (pure geometry,
 `geometry_pipeline_metadata_landmarks.binarypb`).
 
-## TODO connus
+## Known TODOs
 
-- [ ] Extraire la liste des 146 indices de landmarks (sous-ensemble des 478)
-      que MediaPipe donne au modèle blendshapes (source MediaPipe,
+- [ ] Extract the list of the 146 landmark indices (subset of the 478) that
+      MediaPipe feeds to the blendshapes model (MediaPipe source,
       `face_blendshapes_graph`).
-- [ ] Données de calibration réelles : crops de visages variés (distances,
-      éclairages) capturés par la caméra de l'installation.
-- [ ] Mesurer le mode `float` (sans quantization), possiblement FP16 natif,
-      vitesse inconnue (question ouverte de RESEARCH.md).
+- [ ] Real calibration data: crops of varied faces (distances, lighting)
+      captured by the installation's camera.
+- [ ] Measure the `float` mode (no quantization), possibly native FP16, speed
+      unknown (open question in RESEARCH.md).
