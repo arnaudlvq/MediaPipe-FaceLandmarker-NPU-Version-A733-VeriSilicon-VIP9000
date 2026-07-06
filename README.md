@@ -16,6 +16,27 @@ on-device measurements.
 The goal is a working, reproducible recipe with honest, measured numbers. If
 something here is unclear or you spot a mistake, please open an issue.
 
+## Use it
+
+On the board (Radxa Cubie A7A or any A733 with `/dev/vipcore`), after the
+one-time runtime install of [benchmark/RUNTIME.md](benchmark/RUNTIME.md):
+
+```bash
+git clone https://github.com/arnaudlvq/MediaPipe-FaceLandmarker-NPU-Version-A733-VeriSilicon-VIP9000
+cd MediaPipe-FaceLandmarker-NPU-Version-A733-VeriSilicon-VIP9000/runner
+make && ./fl_run --models ../compiled --ppm face.ppm --loop 100
+```
+
+That is the whole pipeline on the NPU: image in, 478 landmarks + 52 blendshapes
+out, as JSON, with latency percentiles. `make` also produces
+`libfacelandmarker_npu.so`, a three-function C API usable from Python via
+ctypes. Details and the API: [runner/README.md](runner/README.md).
+
+To benchmark a single model in isolation (no pre/post), use `vpm_run` as in
+[benchmark/RUNTIME.md](benchmark/RUNTIME.md). To redo the model conversion from
+scratch, the models are vendored in `models/` and the exact `pegasus` commands
+are in [convert/README.md](convert/README.md).
+
 ## Results
 
 All numbers were measured on a Radxa Cubie A7A (Allwinner A733, kernel
@@ -111,28 +132,14 @@ Three details took most of the work:
 3. The blendshapes model takes a 146-landmark subset, extracted from MediaPipe's
    `face_blendshapes_graph.cc` ([convert/landmarks_subset.py](convert/landmarks_subset.py)).
 
-Full conversion recipe: [convert/README.md](convert/README.md).
-
-## Getting started
-
-The compiled binaries in `compiled/*/network_binary.nb` run today with the
-`vpm_run` tool from ai-sdk. The copy-paste recipe (driver check, library install,
-build, benchmark loop) is in [benchmark/RUNTIME.md](benchmark/RUNTIME.md).
-
-To reproduce the conversion, the models are already vendored in `models/`, so you
-go straight to ACUITY (docker image `ubuntu-npu:v2.0.10.2`, target
-`VIP9000NANODI_PID0X1000003B`). See [convert/README.md](convert/README.md) for
-the exact `pegasus` commands.
-
-```bash
-python convert/prepare_workspaces.py    # build the calibration workspaces
-# pegasus import, quantize (float16 or int16), export ovxlib  (see convert/README.md)
-python charts/make_charts.py            # refresh the charts from benchmark/results/
-```
+The CPU glue between the three models (letterbox, anchor decoding, face crop,
+landmark subset) is implemented in [runner/](runner/), a small dependency-free
+C program. Full conversion recipe: [convert/README.md](convert/README.md).
 
 ## Repository layout
 
 ```
+runner/      the chained C runner: image -> landmarks + blendshapes, one call
 models/      the source MediaPipe models, vendored (face_landmarker.task + 3 TFLite)
 compiled/    6 NBG binaries (fp16 and int16) plus the generated OpenVX C projects
 convert/     the reproducible ACUITY pipeline and the numeric validation script
