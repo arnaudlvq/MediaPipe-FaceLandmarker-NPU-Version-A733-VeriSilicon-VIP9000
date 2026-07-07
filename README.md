@@ -28,9 +28,12 @@ make && ./fl_run --models ../compiled --ppm face.ppm --loop 100
 ```
 
 That is the whole pipeline on the NPU: image in, 478 landmarks + 52 blendshapes
-out, as JSON, with latency percentiles. `make` also produces
-`libfacelandmarker_npu.so`, a three-function C API usable from Python via
-ctypes. Details and the API: [runner/README.md](runner/README.md).
+out, as JSON, with latency percentiles. Validated on the board: **16.2 ms per
+frame** end to end (vs 32.4 ms for MediaPipe CPU on the same board), and the
+landmarks agree with the official MediaPipe output to **0.58 px mean**. `make`
+also produces `libfacelandmarker_npu.so`, a three-function C API usable from
+Python via ctypes. Details, measured numbers, and the API:
+[runner/README.md](runner/README.md).
 
 To benchmark a single model in isolation (no pre/post), use `vpm_run` as in
 [benchmark/RUNTIME.md](benchmark/RUNTIME.md). To redo the model conversion from

@@ -5,9 +5,13 @@ The three FaceLandmarker models run on the VIP9000 NPU; this runner does the
 CPU glue between them (letterbox, anchor decoding, face crop, landmark subset)
 that `vpm_run` does not do.
 
-Status: compiles cleanly against the VIPLite v2.0 headers; per-model NPU
-latencies are measured (4.31 ms for the three models, see the repo README).
-The end-to-end chain number will be published after on-device validation.
+Status: validated on the board (Radxa Cubie A7A). Against the official
+MediaPipe CPU output on the same image, the chain agrees to **0.58 px mean
+(p95 0.97 px, max 1.54 px)** on the 478 landmarks and 0.013 mean absolute
+delta on the 52 blendshapes. End-to-end: **16.2 ms/frame** (p50, pinned to one
+A76; p99 20.9 ms), of which 4.3 ms is NPU compute and ~12 ms is the
+unoptimized CPU glue (plain-C bilinear crop; NEON would cut most of it).
+MediaPipe's full CPU frame on the same board is 32.4 ms.
 
 ## Use it
 
@@ -53,20 +57,22 @@ The full C API is three functions: `fl_create(models_dir)`,
 ## How it works
 
 ```
-frame (RGB888)
-  letterbox 128x128, [-1,1]          CPU     ~0.1 ms
-  face_detector                      NPU      0.67 ms   896 anchors
-  decode + pick best face            CPU     ~0.05 ms   sigmoid, threshold 0.5
-  rotated crop 256x256, [0,1]        CPU     ~1 ms      eye-line angle, 1.5x box
-  face_landmarks_detector            NPU      3.16 ms   478 x (x,y,z) + presence
-  map landmarks back to frame px     CPU     ~0.02 ms
-  subset 146 points, pixel coords    CPU     ~0.01 ms
-  face_blendshapes                   NPU      0.48 ms   52 scores
+frame (RGB888)                              measured (512x512 input, 1x A76)
+  letterbox 128x128, [-1,1]          CPU    \
+  face_detector                      NPU     } stage 1: 3.1 ms
+  decode + pick best face            CPU    /
+  rotated crop 256x256, [0,1]        CPU    \
+  face_landmarks_detector            NPU     } stage 2: 12.9 ms
+  map landmarks back to frame px     CPU    /
+  subset 146 points, pixel coords    CPU    \
+  face_blendshapes                   NPU     } stage 3: 0.9 ms
 ```
 
-NPU compute is 4.31 ms; the CPU glue adds roughly 1 to 2 ms on one A76 core.
-Only the glue and the I/O quantization run on the CPU, the networks never
-touch it.
+NPU compute is 4.31 ms of the 16.2 ms total; the rest is the CPU glue,
+dominated by the plain-C bilinear 256x256 crop (~10 ms). The glue is written
+for clarity, not speed: NEON or a nearest-neighbor letterbox would bring the
+chain under 8 ms. Only the glue and the I/O quantization run on the CPU, the
+networks never touch it.
 
 Each CPU stage replicates a MediaPipe calculator from the `face_landmarker.task`
 graph, with the same constants:
