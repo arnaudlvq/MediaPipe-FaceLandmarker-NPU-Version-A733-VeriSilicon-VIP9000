@@ -7,7 +7,7 @@
 VIPLITE ?= $(HOME)/ai-sdk/viplite-tina/lib/aarch64-none-linux-gnu/v2.0
 
 CC      ?= gcc
-CFLAGS  += -O2 -Wall -Wextra -fPIC -I$(VIPLITE)/inc
+CFLAGS  += -O3 -mcpu=cortex-a76 -Wall -Wextra -fPIC -I$(VIPLITE)/inc
 LDLIBS  += -L$(VIPLITE) -lNBGlinker -lVIPhal -lm
 
 SRC = src/vipnet.c src/facelandmarker.c

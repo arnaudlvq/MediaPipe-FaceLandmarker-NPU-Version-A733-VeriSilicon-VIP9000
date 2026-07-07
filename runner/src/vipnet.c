@@ -189,6 +189,17 @@ int vipnet_write_input_fp32(vipnet_t *n, int i, const float *src, uint32_t count
     return 0;
 }
 
+void *vipnet_input_map(vipnet_t *n, int i)
+{
+    return vip_map_buffer(n->in[i].buf);
+}
+
+void vipnet_input_commit(vipnet_t *n, int i)
+{
+    vip_unmap_buffer(n->in[i].buf);
+    vip_flush_buffer(n->in[i].buf, VIP_BUFFER_OPER_TYPE_FLUSH);
+}
+
 int vipnet_run(vipnet_t *n)
 {
     vip_status_e st = vip_run_network(n->net);

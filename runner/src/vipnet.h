@@ -38,6 +38,12 @@ void vipnet_close(vipnet_t *n);
 /* Write input i from fp32 data (handles int16-dfp and fp16 inputs), flush. */
 int vipnet_write_input_fp32(vipnet_t *n, int i, const float *src, uint32_t count);
 
+/* Zero-copy path: map input i for direct writing (returns NULL on failure),
+ * then commit (unmap + cache flush) before running. Lets the preprocessing
+ * quantize straight into the NPU buffer, no intermediate float pass. */
+void *vipnet_input_map(vipnet_t *n, int i);
+void  vipnet_input_commit(vipnet_t *n, int i);
+
 /* Run one inference (blocking). */
 int vipnet_run(vipnet_t *n);
 

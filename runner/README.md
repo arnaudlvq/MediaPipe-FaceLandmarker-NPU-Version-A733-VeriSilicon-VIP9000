@@ -7,11 +7,13 @@ that `vpm_run` does not do.
 
 Status: validated on the board (Radxa Cubie A7A). Against the official
 MediaPipe CPU output on the same image, the chain agrees to **0.58 px mean
-(p95 0.97 px, max 1.54 px)** on the 478 landmarks and 0.013 mean absolute
-delta on the 52 blendshapes. End-to-end: **16.2 ms/frame** (p50, pinned to one
-A76; p99 20.9 ms), of which 4.3 ms is NPU compute and ~12 ms is the
-unoptimized CPU glue (plain-C bilinear crop; NEON would cut most of it).
-MediaPipe's full CPU frame on the same board is 32.4 ms.
+(p95 0.94 px, max 1.54 px)** on the 478 landmarks and 0.012 mean absolute
+delta on the 52 blendshapes. End-to-end: **9.6 ms/frame** (p50, pinned to one
+A76; p99 11.3 ms), of which 4.3 ms is NPU compute and ~5 ms is CPU glue
+(fixed-point bilinear resampling fused with the int16 quantization, written
+straight into the mapped NPU buffers). MediaPipe's full CPU frame on the same
+board is 32.4 ms, so the chain is 3.4x faster end to end and leaves the big
+cores mostly idle.
 
 ## Use it
 
@@ -59,20 +61,21 @@ The full C API is three functions: `fl_create(models_dir)`,
 ```
 frame (RGB888)                              measured (512x512 input, 1x A76)
   letterbox 128x128, [-1,1]          CPU    \
-  face_detector                      NPU     } stage 1: 3.1 ms
+  face_detector                      NPU     } stage 1: 1.7 ms
   decode + pick best face            CPU    /
   rotated crop 256x256, [0,1]        CPU    \
-  face_landmarks_detector            NPU     } stage 2: 12.9 ms
+  face_landmarks_detector            NPU     } stage 2: 6.6 ms
   map landmarks back to frame px     CPU    /
   subset 146 points, pixel coords    CPU    \
   face_blendshapes                   NPU     } stage 3: 0.9 ms
 ```
 
-NPU compute is 4.31 ms of the 16.2 ms total; the rest is the CPU glue,
-dominated by the plain-C bilinear 256x256 crop (~10 ms). The glue is written
-for clarity, not speed: NEON or a nearest-neighbor letterbox would bring the
-chain under 8 ms. Only the glue and the I/O quantization run on the CPU, the
-networks never touch it.
+NPU compute is 4.31 ms of the 9.6 ms total; the CPU glue (~5 ms) is
+fixed-point bilinear resampling fused with the int16 quantization, writing
+straight into the mapped NPU input buffers (no intermediate float pass, no
+extra copy). The quantization is exact at the range ends (255*257 = 65535 for
+the [-1,1] input). Only the glue and the I/O dequantization run on the CPU,
+the networks never touch it.
 
 Each CPU stage replicates a MediaPipe calculator from the `face_landmarker.task`
 graph, with the same constants:

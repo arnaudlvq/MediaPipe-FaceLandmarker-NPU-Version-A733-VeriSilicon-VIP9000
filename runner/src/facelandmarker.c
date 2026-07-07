@@ -76,9 +76,7 @@ typedef struct { float cx, cy; } anchor_t;
 struct fl_ctx {
     vipnet_t det, lmk, bs;
     anchor_t anchors[N_ANCHORS];
-    /* scratch */
-    float det_in[DET_IN * DET_IN * 3];
-    float lmk_in[LMK_IN * LMK_IN * 3];
+    /* scratch (inputs are quantized straight into the mapped NPU buffers) */
     float regressors[N_ANCHORS * 16];
     float scores[N_ANCHORS];
     float lmk_raw[FL_NUM_LANDMARKS * 3];
@@ -120,49 +118,97 @@ static float sigmoidf(float v)
     return 1.f / (1.f + expf(-v));
 }
 
-/* Bilinear sample of an RGB888 image, zero outside. Returns one channel. */
-static inline float sample_rgb(const unsigned char *rgb, int w, int h,
-                               float fx, float fy, int c)
+/* ---- fixed-point bilinear sampling, fused with int16 quantization ----
+ * Coordinates walk in 16.16 fixed point; weights use the top 8 fractional
+ * bits (sum 65536). Out-of-frame neighbors contribute zero, which maps to
+ * the models' padding value by construction (detector -1 -> -32768,
+ * landmarks 0 -> 0). Written for speed: this is >70% of the frame cost. */
+
+/* Sample one RGB pixel bilinearly at 16.16 coords. out[3] in [0,255]. */
+static inline void bilin_u8(const unsigned char *rgb, int w, int h,
+                            int32_t sx, int32_t sy, int out[3])
 {
-    int x0 = (int)floorf(fx), y0 = (int)floorf(fy);
-    float ax = fx - x0, ay = fy - y0;
-    float v = 0.f;
-    int dx, dy;
-    for (dy = 0; dy <= 1; dy++)
-        for (dx = 0; dx <= 1; dx++) {
-            int xx = x0 + dx, yy = y0 + dy;
-            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-            float wgt = (dx ? ax : 1.f - ax) * (dy ? ay : 1.f - ay);
-            v += wgt * rgb[(yy * w + xx) * 3 + c];
-        }
-    return v;
+    int x0 = sx >> 16, y0 = sy >> 16;
+    unsigned fx = (sx >> 8) & 0xFF, fy = (sy >> 8) & 0xFF;
+    unsigned w11 = fx * fy;
+    unsigned w10 = (fx << 8) - w11;
+    unsigned w01 = (fy << 8) - w11;
+    unsigned w00 = 65536 - w10 - w01 - w11;
+    if (x0 >= 0 && y0 >= 0 && x0 + 1 < w && y0 + 1 < h) {
+        const unsigned char *p0 = rgb + (y0 * w + x0) * 3;
+        const unsigned char *p1 = p0 + w * 3;
+        out[0] = (int)(p0[0]*w00 + p0[3]*w10 + p1[0]*w01 + p1[3]*w11 + 32768) >> 16;
+        out[1] = (int)(p0[1]*w00 + p0[4]*w10 + p1[1]*w01 + p1[4]*w11 + 32768) >> 16;
+        out[2] = (int)(p0[2]*w00 + p0[5]*w10 + p1[2]*w01 + p1[5]*w11 + 32768) >> 16;
+    } else if (x0 >= -1 && y0 >= -1 && x0 < w && y0 < h) {
+        unsigned acc0 = 0, acc1 = 0, acc2 = 0;
+        int dy, dx;
+        for (dy = 0; dy <= 1; dy++)
+            for (dx = 0; dx <= 1; dx++) {
+                int xx = x0 + dx, yy = y0 + dy;
+                if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+                unsigned wgt = dy ? (dx ? w11 : w01) : (dx ? w10 : w00);
+                const unsigned char *p = rgb + (yy * w + xx) * 3;
+                acc0 += p[0] * wgt; acc1 += p[1] * wgt; acc2 += p[2] * wgt;
+            }
+        out[0] = (acc0 + 32768) >> 16;
+        out[1] = (acc1 + 32768) >> 16;
+        out[2] = (acc2 + 32768) >> 16;
+    } else {
+        out[0] = out[1] = out[2] = 0;
+    }
 }
 
-/* Letterbox the frame into dst (side x side x 3 fp32), values [lo, hi].
- * Writes the mapping (scale, pad) needed to project detections back. */
-static void letterbox(const unsigned char *rgb, int w, int h,
-                      float *dst, int side, float lo, float hi,
-                      float *scale_out, float *padx_out, float *pady_out)
+/* Letterbox straight into the detector's int16 input ([-1,1], fl=15):
+ * i16 = v*257 - 32768 is exact at both ends (255*257 = 65535). */
+static void letterbox_det_i16(const unsigned char *rgb, int w, int h,
+                              int16_t *dst,
+                              float *scale_out, float *padx_out, float *pady_out)
 {
-    float scale = (float)side / (float)(w > h ? w : h);
-    float outw = w * scale, outh = h * scale;
-    float padx = (side - outw) * 0.5f, pady = (side - outh) * 0.5f;
-    float k = (hi - lo) / 255.f;
-    int x, y, c;
-    for (y = 0; y < side; y++) {
-        for (x = 0; x < side; x++) {
-            float sx = (x + 0.5f - padx) / scale - 0.5f;
-            float sy = (y + 0.5f - pady) / scale - 0.5f;
-            float *px = dst + (y * side + x) * 3;
-            if (sx < -1.f || sy < -1.f || sx > w || sy > h) {
-                px[0] = px[1] = px[2] = lo;
-            } else {
-                for (c = 0; c < 3; c++)
-                    px[c] = lo + k * sample_rgb(rgb, w, h, sx, sy, c);
-            }
+    float scale = (float)DET_IN / (float)(w > h ? w : h);
+    float padx = (DET_IN - w * scale) * 0.5f, pady = (DET_IN - h * scale) * 0.5f;
+    double inv = 1.0 / scale;
+    int32_t dxx = (int32_t)(inv * 65536.0);
+    int32_t x0f = (int32_t)(((0.5 - padx) * inv - 0.5) * 65536.0);
+    int32_t y0f = (int32_t)(((0.5 - pady) * inv - 0.5) * 65536.0);
+    int x, y, px[3];
+    for (y = 0; y < DET_IN; y++) {
+        int32_t sy = y0f + y * dxx;
+        int32_t sx = x0f;
+        int16_t *d = dst + y * DET_IN * 3;
+        for (x = 0; x < DET_IN; x++, sx += dxx, d += 3) {
+            bilin_u8(rgb, w, h, sx, sy, px);
+            d[0] = (int16_t)(px[0] * 257 - 32768);
+            d[1] = (int16_t)(px[1] * 257 - 32768);
+            d[2] = (int16_t)(px[2] * 257 - 32768);
         }
     }
     *scale_out = scale; *padx_out = padx; *pady_out = pady;
+}
+
+/* Rotated square crop straight into the landmark model's int16 input
+ * ([0,1], fl=14): i16 = (v*16384 + 127) / 255. Affine walk per row. */
+static void crop_lmk_i16(const unsigned char *rgb, int w, int h,
+                         float fx, float fy, float side, float cr, float sr,
+                         int16_t *dst)
+{
+    double du = (double)side / LMK_IN;
+    double u0 = (0.5 / LMK_IN - 0.5) * side;
+    int32_t bx = (int32_t)(du * cr * 65536.0);   /* d(sx)/dx */
+    int32_t by = (int32_t)(du * sr * 65536.0);   /* d(sy)/dx */
+    int x, y, px[3];
+    for (y = 0; y < LMK_IN; y++) {
+        double vv = u0 + y * du;
+        int32_t sx = (int32_t)((fx - 0.5 + u0 * cr - vv * sr) * 65536.0);
+        int32_t sy = (int32_t)((fy - 0.5 + u0 * sr + vv * cr) * 65536.0);
+        int16_t *d = dst + y * LMK_IN * 3;
+        for (x = 0; x < LMK_IN; x++, sx += bx, sy += by, d += 3) {
+            bilin_u8(rgb, w, h, sx, sy, px);
+            d[0] = (int16_t)((px[0] * 16384 + 127) / 255);
+            d[1] = (int16_t)((px[1] * 16384 + 127) / 255);
+            d[2] = (int16_t)((px[2] * 16384 + 127) / 255);
+        }
+    }
 }
 
 /* Decode the 896 anchors, return index of the best-scoring detection
@@ -244,10 +290,12 @@ int fl_process_rgb(fl_ctx_t *ctx, const unsigned char *rgb, int width, int heigh
     memset(out, 0, sizeof(*out));
 
     /* -------- stage 1: detector -------- */
-    letterbox(rgb, width, height, ctx->det_in, DET_IN, -1.f, 1.f,
-              &scale, &padx, &pady);
-    if (vipnet_write_input_fp32(&ctx->det, 0, ctx->det_in, DET_IN * DET_IN * 3) != 0)
-        return -1;
+    {
+        int16_t *din = (int16_t *)vipnet_input_map(&ctx->det, 0);
+        if (!din) return -1;
+        letterbox_det_i16(rgb, width, height, din, &scale, &padx, &pady);
+        vipnet_input_commit(&ctx->det, 0);
+    }
     if (vipnet_run(&ctx->det) != 0) return -1;
     /* output order per nbg_meta.json: regressors [896x16], classificators [896] */
     if (vipnet_read_output_fp32(&ctx->det, 0, ctx->regressors, N_ANCHORS * 16) < 0)
@@ -277,26 +325,17 @@ int fl_process_rgb(fl_ctx_t *ctx, const unsigned char *rgb, int width, int heigh
         float rot = atan2f(ey1 - ey0, ex1 - ex0);
         float side = ROI_SCALE * (fw > fh ? fw : fh);   /* square-long * 1.5 */
         float cr = cosf(rot), sr = sinf(rot);
-        int x, y, c;
 
         out->roi_cx = fx; out->roi_cy = fy;
         out->roi_size = side; out->roi_rotation = rot;
 
-        /* rotated crop -> 256x256, [0,1] */
-        for (y = 0; y < LMK_IN; y++) {
-            for (x = 0; x < LMK_IN; x++) {
-                float u = ((x + 0.5f) / LMK_IN - 0.5f) * side;
-                float v = ((y + 0.5f) / LMK_IN - 0.5f) * side;
-                float sx = fx + u * cr - v * sr - 0.5f;
-                float sy = fy + u * sr + v * cr - 0.5f;
-                float *px = ctx->lmk_in + (y * LMK_IN + x) * 3;
-                for (c = 0; c < 3; c++)
-                    px[c] = sample_rgb(rgb, width, height, sx, sy, c) / 255.f;
-            }
+        /* rotated crop -> 256x256, quantized straight into the NPU buffer */
+        {
+            int16_t *lin = (int16_t *)vipnet_input_map(&ctx->lmk, 0);
+            if (!lin) return -1;
+            crop_lmk_i16(rgb, width, height, fx, fy, side, cr, sr, lin);
+            vipnet_input_commit(&ctx->lmk, 0);
         }
-
-        if (vipnet_write_input_fp32(&ctx->lmk, 0, ctx->lmk_in,
-                                    LMK_IN * LMK_IN * 3) != 0) return -1;
         if (vipnet_run(&ctx->lmk) != 0) return -1;
         /* outputs: Identity [1434] landmarks, Identity_1 [1] presence logit */
         if (vipnet_read_output_fp32(&ctx->lmk, 0, ctx->lmk_raw,
