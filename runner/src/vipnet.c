@@ -16,16 +16,29 @@
 #define CHECK(st, msg) \
     do { if ((st) != VIP_SUCCESS) { fprintf(stderr, "vipnet: %s failed, status=%d\n", msg, (int)(st)); return -1; } } while (0)
 
+/* vip_init/vip_destroy are per PROCESS, not per context. Refcount them so a
+ * second context does not re-init the driver, and so destroying one context
+ * does not tear the driver out from under another one still using it. */
+static int g_vip_users;
+
 int vipnet_global_init(void)
 {
-    vip_status_e st = vip_init();
+    vip_status_e st;
+    if (g_vip_users > 0) {
+        g_vip_users++;
+        return 0;
+    }
+    st = vip_init();
     CHECK(st, "vip_init");
+    g_vip_users = 1;
     return 0;
 }
 
 void vipnet_global_exit(void)
 {
-    vip_destroy();
+    if (g_vip_users <= 0) return;
+    if (--g_vip_users == 0)
+        vip_destroy();
 }
 
 static int query_io(vipnet_t *n, int is_input, uint32_t idx, vipnet_io_t *io)
@@ -71,31 +84,42 @@ int vipnet_open(vipnet_t *n, const char *nbg_path)
     st = vip_create_network(nbg_path, 0, VIP_CREATE_NETWORK_FROM_FILE, &n->net);
     CHECK(st, "vip_create_network");
 
+    /* Past this point the network exists, so every failure has to go through
+     * vipnet_close(): a bare return would leak the network and any buffers
+     * already created for it. */
+#define OPEN_CHECK(st, msg) \
+    do { if ((st) != VIP_SUCCESS) { \
+            fprintf(stderr, "vipnet: %s failed, status=%d\n", msg, (int)(st)); \
+            vipnet_close(n); return -1; } } while (0)
+
     st = vip_query_network(n->net, VIP_NETWORK_PROP_INPUT_COUNT, &n->n_in);
-    CHECK(st, "query input count");
+    OPEN_CHECK(st, "query input count");
     st = vip_query_network(n->net, VIP_NETWORK_PROP_OUTPUT_COUNT, &n->n_out);
-    CHECK(st, "query output count");
+    OPEN_CHECK(st, "query output count");
     if (n->n_in > VIPNET_MAX_IO || n->n_out > VIPNET_MAX_IO) {
         fprintf(stderr, "vipnet: too many I/O (%u in, %u out)\n", n->n_in, n->n_out);
+        vipnet_close(n);
         return -1;
     }
 
     for (i = 0; i < n->n_in; i++)
-        if (query_io(n, 1, i, &n->in[i]) != 0) return -1;
+        if (query_io(n, 1, i, &n->in[i]) != 0) { vipnet_close(n); return -1; }
     for (i = 0; i < n->n_out; i++)
-        if (query_io(n, 0, i, &n->out[i]) != 0) return -1;
+        if (query_io(n, 0, i, &n->out[i]) != 0) { vipnet_close(n); return -1; }
 
     st = vip_prepare_network(n->net);
-    CHECK(st, "vip_prepare_network");
+    OPEN_CHECK(st, "vip_prepare_network");
+    n->prepared = 1;
 
     for (i = 0; i < n->n_in; i++) {
         st = vip_set_input(n->net, i, n->in[i].buf);
-        CHECK(st, "vip_set_input");
+        OPEN_CHECK(st, "vip_set_input");
     }
     for (i = 0; i < n->n_out; i++) {
         st = vip_set_output(n->net, i, n->out[i].buf);
-        CHECK(st, "vip_set_output");
+        OPEN_CHECK(st, "vip_set_output");
     }
+#undef OPEN_CHECK
     return 0;
 }
 
@@ -103,7 +127,10 @@ void vipnet_close(vipnet_t *n)
 {
     uint32_t i;
     if (n->net) {
-        vip_finish_network(n->net);
+        /* vip_finish_network only balances a successful prepare; calling it
+         * on a network that never got that far inverts the vendor sequence. */
+        if (n->prepared)
+            vip_finish_network(n->net);
         vip_destroy_network(n->net);
     }
     for (i = 0; i < n->n_in; i++)

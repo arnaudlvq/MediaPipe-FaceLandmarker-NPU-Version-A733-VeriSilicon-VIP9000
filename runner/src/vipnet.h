@@ -24,9 +24,11 @@ typedef struct {
     vipnet_io_t in[VIPNET_MAX_IO];
     vipnet_io_t out[VIPNET_MAX_IO];
     uint32_t n_in, n_out;
+    int prepared;                   /* prepare succeeded, so finish must run */
 } vipnet_t;
 
-/* Driver-wide init/exit (vip_init / vip_destroy). Call once per process. */
+/* Driver-wide init/exit (vip_init / vip_destroy). Refcounted, so it is safe
+ * to pair one init with one exit per context. */
 int  vipnet_global_init(void);
 void vipnet_global_exit(void);
 

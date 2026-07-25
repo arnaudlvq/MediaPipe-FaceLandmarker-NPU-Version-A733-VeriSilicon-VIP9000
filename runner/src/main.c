@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "facelandmarker.h"
 
@@ -24,7 +25,8 @@ static unsigned char *read_ppm(const char *path, int *w, int *h)
     }
     /* skip comments */
     int c;
-    int vals[3], n = 0;
+    int vals[3] = {0, 0, 0}, n = 0;
+    size_t bytes;
     while (n < 3 && (c = fgetc(f)) != EOF) {
         if (c == '#') { while ((c = fgetc(f)) != EOF && c != '\n'); }
         else if (c >= '0' && c <= '9') {
@@ -33,10 +35,18 @@ static unsigned char *read_ppm(const char *path, int *w, int *h)
             vals[n++] = v;
         }
     }
+    /* A header cut short leaves values unread: refuse the file rather than
+     * size an allocation from whatever was on the stack. */
+    if (n != 3) { fprintf(stderr, "%s: incomplete PPM header\n", path); fclose(f); return NULL; }
     *w = vals[0]; *h = vals[1]; maxv = vals[2];
+    if (*w <= 0 || *h <= 0 || *w > 65535 || *h > 65535) {
+        fprintf(stderr, "%s: implausible size %dx%d\n", path, *w, *h); fclose(f); return NULL;
+    }
     if (maxv != 255) { fprintf(stderr, "%s: maxval %d unsupported\n", path, maxv); fclose(f); return NULL; }
-    data = (unsigned char *)malloc((size_t)*w * *h * 3);
-    if (fread(data, 1, (size_t)*w * *h * 3, f) != (size_t)*w * *h * 3) {
+    bytes = (size_t)*w * (size_t)*h * 3;
+    data = (unsigned char *)malloc(bytes);
+    if (!data) { fprintf(stderr, "%s: out of memory\n", path); fclose(f); return NULL; }
+    if (fread(data, 1, bytes, f) != bytes) {
         fprintf(stderr, "%s: truncated\n", path); free(data); fclose(f); return NULL;
     }
     fclose(f);
@@ -53,14 +63,16 @@ int main(int argc, char **argv)
 {
     const char *models = "../compiled", *ppm = NULL;
     int loop = 1, i;
+    double fps = 0.0;   /* >0: pace the loop at this rate (power measurements) */
 
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--models") && i + 1 < argc) models = argv[++i];
         else if (!strcmp(argv[i], "--ppm") && i + 1 < argc) ppm = argv[++i];
         else if (!strcmp(argv[i], "--loop") && i + 1 < argc) loop = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--fps") && i + 1 < argc) fps = atof(argv[++i]);
         else {
             fprintf(stderr,
-                "usage: %s --models DIR --ppm IMG.ppm [--loop N]\n", argv[0]);
+                "usage: %s --models DIR --ppm IMG.ppm [--loop N] [--fps F]\n", argv[0]);
             return 2;
         }
     }
@@ -85,6 +97,14 @@ int main(int argc, char **argv)
             return 1;
         }
         totals[i] = res.ms_total;
+        if (fps > 0.0) {
+            double left_ms = 1000.0 / fps - res.ms_total;
+            if (left_ms > 0) {
+                struct timespec ts = { (time_t)(left_ms / 1000.0),
+                                       (long)((left_ms - (long)(left_ms / 1000.0) * 1000.0) * 1e6) };
+                nanosleep(&ts, NULL);
+            }
+        }
     }
 
     /* last-run JSON on stdout */
