@@ -43,6 +43,14 @@ typedef struct fl_ctx fl_ctx_t;
  * Returns NULL on failure (details on stderr). */
 fl_ctx_t *fl_create(const char *models_dir);
 
+/* Same, with the face detector taken from its own directory instead of
+ * models_dir/face_detector_nbg_int16. Use it to swap in the full-range
+ * BlazeFace (192 input, 2304 anchors): it finds a face down to ~7% of the
+ * frame width where the short-range one needs ~15%, so it roughly doubles
+ * the working distance, for about 1.6 ms more per frame. The variant is
+ * recognised from the network itself, nothing else to declare. */
+fl_ctx_t *fl_create_detector(const char *models_dir, const char *detector_dir);
+
 /* Process one RGB888 frame (w*h*3 bytes, row-major, no padding).
  * Returns 0 on success (even when no face: face_present tells). */
 int fl_process_rgb(fl_ctx_t *ctx, const unsigned char *rgb, int width, int height,

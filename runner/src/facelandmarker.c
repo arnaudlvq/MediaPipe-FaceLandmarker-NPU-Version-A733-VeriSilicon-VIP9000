@@ -33,9 +33,13 @@
 #include "facelandmarker.h"
 
 /* ---------------- constants from the model + graph configs ---------------- */
-#define DET_IN     128
+/* Two BlazeFace variants are supported and told apart at load time by their
+ * own input size, so one binary drives either without a flag to forget:
+ *   short range: 128 input,  896 anchors, needs the face at ~15% of the frame
+ *   full range:  192 input, 2304 anchors, finds it down to ~7%              */
+#define DET_IN_MAX 192
 #define LMK_IN     256
-#define N_ANCHORS  896
+#define N_ANCHORS_MAX 2304
 #define DET_SCORE_MIN   0.5f     /* min_detection_confidence */
 #define PRESENCE_MIN    0.5f     /* min_face_presence_confidence */
 #define ROI_SCALE       1.5f     /* RectTransformation scale_x/scale_y */
@@ -75,21 +79,33 @@ typedef struct { float cx, cy; } anchor_t;
 
 struct fl_ctx {
     vipnet_t det, lmk, bs;
-    anchor_t anchors[N_ANCHORS];
+    int det_in;                 /* detector input side, 128 or 192 */
+    int n_anchors;              /* 896 or 2304, read from the network */
+    anchor_t anchors[N_ANCHORS_MAX];
     /* scratch (inputs are quantized straight into the mapped NPU buffers) */
-    float regressors[N_ANCHORS * 16];
-    float scores[N_ANCHORS];
+    float regressors[N_ANCHORS_MAX * 16];
+    float scores[N_ANCHORS_MAX];
     float lmk_raw[FL_NUM_LANDMARKS * 3];
     float bs_in[146 * 2];
 };
 
-/* SsdAnchorsCalculator for the short-range BlazeFace config:
- * input 128, strides {8,16,16,16}, fixed_anchor_size, offset 0.5.
- * Layer 0: 16x16 cells x 2 anchors = 512; layers 1-3 share stride 16 and
- * merge into 8x8 cells x 6 anchors = 384. Total 896. */
-static void gen_anchors(anchor_t *a)
+/* SsdAnchorsCalculator, both published BlazeFace configs.
+ * Short range: input 128, strides {8,16,16,16}, fixed_anchor_size, offset 0.5.
+ *   Layer 0 gives 16x16 cells x 2 anchors = 512; layers 1-3 share stride 16
+ *   and merge into 8x8 cells x 6 anchors = 384. Total 896.
+ * Full range: input 192, a single stride of 4, one anchor per cell, so a
+ *   48x48 grid = 2304. Denser and finer, which is what buys the range. */
+static int gen_anchors(anchor_t *a, int det_in)
 {
     int n = 0, y, x, k;
+    if (det_in == 192) {
+        for (y = 0; y < 48; y++)
+            for (x = 0; x < 48; x++, n++) {
+                a[n].cx = (x + 0.5f) / 48.f;
+                a[n].cy = (y + 0.5f) / 48.f;
+            }
+        return n;                                   /* 2304 */
+    }
     for (y = 0; y < 16; y++)
         for (x = 0; x < 16; x++)
             for (k = 0; k < 2; k++, n++) {
@@ -102,6 +118,7 @@ static void gen_anchors(anchor_t *a)
                 a[n].cx = (x + 0.5f) / 8.f;
                 a[n].cy = (y + 0.5f) / 8.f;
             }
+    return n;                                       /* 896 */
 }
 
 static double now_ms(void)
@@ -161,22 +178,22 @@ static inline void bilin_u8(const unsigned char *rgb, int w, int h,
 
 /* Letterbox straight into the detector's int16 input ([-1,1], fl=15):
  * i16 = v*257 - 32768 is exact at both ends (255*257 = 65535). */
-static void letterbox_det_i16(const unsigned char *rgb, int w, int h,
+static void letterbox_det_i16(const unsigned char *rgb, int w, int h, int det_in,
                               int16_t *dst,
                               float *scale_out, float *padx_out, float *pady_out)
 {
-    float scale = (float)DET_IN / (float)(w > h ? w : h);
-    float padx = (DET_IN - w * scale) * 0.5f, pady = (DET_IN - h * scale) * 0.5f;
+    float scale = (float)det_in / (float)(w > h ? w : h);
+    float padx = (det_in - w * scale) * 0.5f, pady = (det_in - h * scale) * 0.5f;
     double inv = 1.0 / scale;
     int32_t dxx = (int32_t)(inv * 65536.0);
     int32_t x0f = (int32_t)(((0.5 - padx) * inv - 0.5) * 65536.0);
     int32_t y0f = (int32_t)(((0.5 - pady) * inv - 0.5) * 65536.0);
     int x, y, px[3];
-    for (y = 0; y < DET_IN; y++) {
+    for (y = 0; y < det_in; y++) {
         int32_t sy = y0f + y * dxx;
         int32_t sx = x0f;
-        int16_t *d = dst + y * DET_IN * 3;
-        for (x = 0; x < DET_IN; x++, sx += dxx, d += 3) {
+        int16_t *d = dst + y * det_in * 3;
+        for (x = 0; x < det_in; x++, sx += dxx, d += 3) {
             bilin_u8(rgb, w, h, sx, sy, px);
             d[0] = (int16_t)(px[0] * 257 - 32768);
             d[1] = (int16_t)(px[1] * 257 - 32768);
@@ -214,12 +231,12 @@ static void crop_lmk_i16(const unsigned char *rgb, int w, int h,
 /* Decode the 896 anchors, return index of the best-scoring detection
  * (or -1), with its box and 6 keypoints in letterbox-normalized coords. */
 static int decode_best(const float *reg, const float *logits,
-                       const anchor_t *anchors,
+                       const anchor_t *anchors, int n_anchors, int det_in,
                        float *score, float box[4], float kp[12])
 {
     int best = -1, i, j;
     float best_s = DET_SCORE_MIN;
-    for (i = 0; i < N_ANCHORS; i++) {
+    for (i = 0; i < n_anchors; i++) {
         float s = sigmoidf(logits[i]);
         if (s <= best_s) continue;
         best_s = s; best = i;
@@ -228,14 +245,14 @@ static int decode_best(const float *reg, const float *logits,
     {
         const float *r = reg + best * 16;
         float acx = anchors[best].cx, acy = anchors[best].cy;
-        float cx = r[0] / DET_IN + acx;
-        float cy = r[1] / DET_IN + acy;
-        float w  = r[2] / DET_IN;
-        float h  = r[3] / DET_IN;
+        float cx = r[0] / det_in + acx;
+        float cy = r[1] / det_in + acy;
+        float w  = r[2] / det_in;
+        float h  = r[3] / det_in;
         box[0] = cx; box[1] = cy; box[2] = w; box[3] = h;
         for (j = 0; j < 6; j++) {
-            kp[j * 2 + 0] = r[4 + j * 2 + 0] / DET_IN + acx;
-            kp[j * 2 + 1] = r[4 + j * 2 + 1] / DET_IN + acy;
+            kp[j * 2 + 0] = r[4 + j * 2 + 0] / det_in + acx;
+            kp[j * 2 + 1] = r[4 + j * 2 + 1] / det_in + acy;
         }
     }
     *score = best_s;
@@ -243,6 +260,11 @@ static int decode_best(const float *reg, const float *logits,
 }
 
 fl_ctx_t *fl_create(const char *models_dir)
+{
+    return fl_create_detector(models_dir, NULL);
+}
+
+fl_ctx_t *fl_create_detector(const char *models_dir, const char *detector_dir)
 {
     static const char *sub[3] = {
         "face_detector_nbg_int16", "face_landmarks_detector_nbg_int16",
@@ -258,14 +280,27 @@ fl_ctx_t *fl_create(const char *models_dir)
     if (!ctx) return NULL;
     nets[0] = &ctx->det; nets[1] = &ctx->lmk; nets[2] = &ctx->bs;
     for (i = 0; i < 3; i++) {
-        snprintf(path, sizeof(path), "%s/%s/network_binary.nb", models_dir, sub[i]);
+        if (i == 0 && detector_dir)
+            snprintf(path, sizeof(path), "%s/network_binary.nb", detector_dir);
+        else
+            snprintf(path, sizeof(path), "%s/%s/network_binary.nb", models_dir, sub[i]);
         if (vipnet_open(nets[i], path) != 0) {
             fprintf(stderr, "fl_create: cannot open %s\n", path);
             fl_destroy(ctx);
             return NULL;
         }
     }
-    gen_anchors(ctx->anchors);
+    /* The detector variant announces itself: input side and anchor count come
+     * from the network, so dropping in the full-range NBG is all it takes. */
+    ctx->det_in = (int)ctx->det.in[0].p.sizes[1];
+    ctx->n_anchors = (int)(ctx->det.out[1].elements);
+    if (ctx->det_in > DET_IN_MAX || ctx->n_anchors > N_ANCHORS_MAX ||
+        gen_anchors(ctx->anchors, ctx->det_in) != ctx->n_anchors) {
+        fprintf(stderr, "fl_create: unsupported detector, input %d, %d anchors\n",
+                ctx->det_in, ctx->n_anchors);
+        fl_destroy(ctx);
+        return NULL;
+    }
     return ctx;
 }
 
@@ -293,20 +328,20 @@ int fl_process_rgb(fl_ctx_t *ctx, const unsigned char *rgb, int width, int heigh
     {
         int16_t *din = (int16_t *)vipnet_input_map(&ctx->det, 0);
         if (!din) return -1;
-        letterbox_det_i16(rgb, width, height, din, &scale, &padx, &pady);
+        letterbox_det_i16(rgb, width, height, ctx->det_in, din, &scale, &padx, &pady);
         vipnet_input_commit(&ctx->det, 0);
     }
     if (vipnet_run(&ctx->det) != 0) return -1;
     /* output order per nbg_meta.json: regressors [896x16], classificators [896] */
-    if (vipnet_read_output_fp32(&ctx->det, 0, ctx->regressors, N_ANCHORS * 16) < 0)
+    if (vipnet_read_output_fp32(&ctx->det, 0, ctx->regressors, ctx->n_anchors * 16) < 0)
         return -1;
-    if (vipnet_read_output_fp32(&ctx->det, 1, ctx->scores, N_ANCHORS) < 0)
+    if (vipnet_read_output_fp32(&ctx->det, 1, ctx->scores, ctx->n_anchors) < 0)
         return -1;
     t1 = now_ms();
     out->ms_detect = t1 - t0;
 
     if (decode_best(ctx->regressors, ctx->scores, ctx->anchors,
-                    &score, box, kp) < 0) {
+                    ctx->n_anchors, ctx->det_in, &score, box, kp) < 0) {
         out->ms_total = now_ms() - t0;
         return 0;                       /* no face */
     }
@@ -315,13 +350,13 @@ int fl_process_rgb(fl_ctx_t *ctx, const unsigned char *rgb, int width, int heigh
     /* -------- stage 2: ROI + landmarks -------- */
     {
         /* letterbox-normalized -> frame pixels */
-        float fx = (box[0] * DET_IN - padx) / scale;
-        float fy = (box[1] * DET_IN - pady) / scale;
-        float fw = box[2] * DET_IN / scale;
-        float fh = box[3] * DET_IN / scale;
+        float fx = (box[0] * ctx->det_in - padx) / scale;
+        float fy = (box[1] * ctx->det_in - pady) / scale;
+        float fw = box[2] * ctx->det_in / scale;
+        float fh = box[3] * ctx->det_in / scale;
         /* rotation from keypoint 0 (right eye) to 1 (left eye), target 0 rad */
-        float ex0 = (kp[0] * DET_IN - padx) / scale, ey0 = (kp[1] * DET_IN - pady) / scale;
-        float ex1 = (kp[2] * DET_IN - padx) / scale, ey1 = (kp[3] * DET_IN - pady) / scale;
+        float ex0 = (kp[0] * ctx->det_in - padx) / scale, ey0 = (kp[1] * ctx->det_in - pady) / scale;
+        float ex1 = (kp[2] * ctx->det_in - padx) / scale, ey1 = (kp[3] * ctx->det_in - pady) / scale;
         float rot = atan2f(ey1 - ey0, ex1 - ex0);
         float side = ROI_SCALE * (fw > fh ? fw : fh);   /* square-long * 1.5 */
         float cr = cosf(rot), sr = sinf(rot);
