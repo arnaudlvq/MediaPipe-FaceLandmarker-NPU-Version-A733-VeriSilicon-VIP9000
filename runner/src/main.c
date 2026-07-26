@@ -83,7 +83,12 @@ int main(int argc, char **argv)
     if (!rgb) return 1;
     fprintf(stderr, "frame %dx%d, models %s\n", w, h, models);
 
-    fl_ctx_t *ctx = fl_create(models);
+    /* FL_DETECTOR points at a face detector directory of its own, so the
+     * full-range variant can be tried without touching the other models. */
+    const char *det_dir = getenv("FL_DETECTOR");
+    fl_ctx_t *ctx = fl_create_detector(models, det_dir);
+    if (ctx && det_dir)
+        fprintf(stderr, "using detector from %s\n", det_dir);
     if (!ctx) { free(rgb); return 1; }
 
     fl_result_t res;

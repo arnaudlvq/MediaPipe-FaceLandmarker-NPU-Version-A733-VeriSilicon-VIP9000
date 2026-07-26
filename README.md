@@ -35,6 +35,49 @@ also produces `libfacelandmarker_npu.so`, a three-function C API usable from
 Python via ctypes. Details, measured numbers, and the API:
 [runner/README.md](runner/README.md).
 
+### Two face detectors, and how far each one sees
+
+The chain ships with both published BlazeFace variants, and the choice
+decides the working distance more than anything else does:
+
+```bash
+./fl_run --models ../compiled --ppm face.ppm --loop 100          # short range
+FL_DETECTOR=../compiled/face_detector_full_range_nbg_int16 \
+    ./fl_run --models ../compiled --ppm face.ppm --loop 100      # full range
+```
+
+| Detector | Input | Anchors | Finds a face down to | Chain p50 |
+| --- | --- | --- | --- | --- |
+| short range (default) | 128 | 896 | ~15% of the frame width | 10.7 ms |
+| full range | 192 | 2304 | **~7.1%** | 15.4 ms |
+
+(Same image, 60 runs each. The full-range model is 2.25x the input area and
+2.6x the anchors, so the 4.7 ms is where it goes.)
+
+The detector letterboxes whatever frame it is handed down to its own input,
+so what limits acquisition is the face's FRACTION of the frame, not its
+pixel count: raising the capture resolution does not extend the range at
+all, and both variants fail at exactly the same distance when the face gets
+too small. Swapping the detector roughly doubles the working distance for
+1.6 ms.
+
+`fl_create_detector(models_dir, detector_dir)` takes the detector from its
+own directory, so a caller picks a variant without duplicating the other two
+models. The runner reads the input side and the anchor count **from the
+network itself** and generates the matching anchor grid, so there is no flag
+to get wrong: drop in either NBG and it does the right thing.
+
+Conversion notes for anyone redoing it: use the **dense**
+`face_detection_full_range.tflite`, not the sparse one, whose compressed
+weights make the ACUITY importer fail on a reshape. Calibrate on whole
+scenes letterboxed to 192, not on tight face crops, since small faces in
+wide frames are the whole point of this model. Measured int16 fidelity:
+score 0.83 on the NPU against 0.82 for the CPU float reference on the same
+image.
+
+Both still clear any sane frame rate: 15.4 ms is 65 fps, and the artwork
+this came from runs the chain at 15.
+
 To benchmark a single model in isolation (no pre/post), use `vpm_run` as in
 [benchmark/RUNTIME.md](benchmark/RUNTIME.md). To redo the model conversion from
 scratch, the models are vendored in `models/` and the exact `pegasus` commands
